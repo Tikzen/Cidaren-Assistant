@@ -246,7 +246,7 @@ def make_pages():
     instructions = next(w for w in dialog.findChildren(QLabel) if '电脑版微信' in w.text() and w.wordWrap())
     render('02-token.png', dialog, '02  使用内置 Token 获取工具', '点击“开始获取”后，在电脑版微信中打开词达人学生端。', [
         mark(rect_of(dialog, dialog.start_button), '先点“开始获取”', '然后在电脑版微信中打开词达人学生端，并浏览页面。', side='top'),
-        mark(rect_of(dialog, instructions), '按界面提示操作', '捕获成功后，Token 自动填入主窗口；空闲时会尝试登录。'),
+        mark(rect_of(dialog, instructions), '无反应时这样触发', '打开词达人任意页面触发请求，推荐点击头像进入个人资料页面。'),
         mark(united(rect_of(dialog, dialog.stop_button), rect_of(dialog, dialog.close_button)), '取消时正常停止', '使用“停止”或“关闭”，让工具恢复临时系统代理。', side='top'),
     ])
     close(dialog)

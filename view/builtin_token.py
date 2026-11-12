@@ -76,7 +76,7 @@ class BuiltinTokenDialog(QDialog):
         # 说明文本
         info_text = (
             "1. 点「开始获取」\n"
-            "2. 在电脑版微信中打开词达人学生端\n"
+            "2. 在电脑版微信中打开词达人学生端。如无反应，请打开词达人任意页面触发请求，推荐点击头像进入个人资料页面。\n"
             "3. 稍等片刻，获取成功后 Token 会自动填入主窗口"
         )
         info_label = QLabel(info_text)
