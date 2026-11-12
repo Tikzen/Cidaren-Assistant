@@ -107,5 +107,29 @@ class DesktopQueueUiTests(unittest.TestCase):
         incomplete = self.ui.queue_list.itemWidget(self.ui.queue_list.item(1)).findChildren(QCheckBox)[0]
         self.assertFalse(incomplete.isEnabled())
 
+    def test_task_actions_need_selection_but_add_all_uses_whole_category(self):
+        self.ui.task_table.clearSelection()
+        for button in (self.ui.add_button, self.ui.start_task_button, self.ui.full_button):
+            self.assertFalse(button.isEnabled())
+        self.assertTrue(self.ui.add_all_button.isEnabled())
+        self.ui.task_table.selectRow(1)
+        self.assertTrue(self.ui.start_task_button.isEnabled())
+        self.ui.task_table.clearSelection()
+        self.ui.add_all()
+        self.assertEqual(len(self.ui.queue.snapshot('test')), 3)
+
+    def test_queue_tools_follow_selected_item_state(self):
+        self.ui.add_all(); self.ui.queue.claim('test'); self.ui.refresh_queue()
+        self.ui.queue_list.item(0).setSelected(True)
+        self.assertFalse(self.ui.remove_button.isEnabled())
+        self.assertFalse(self.ui.up_button.isEnabled())
+        self.ui.queue_list.clearSelection(); self.ui.queue_list.item(1).setSelected(True)
+        self.assertFalse(self.ui.up_button.isEnabled())  # 第一个等待项不能再上移
+        self.assertTrue(self.ui.down_button.isEnabled())
+        self.assertTrue(self.ui.remove_button.isEnabled())
+        self.assertFalse(self.ui.retry_button.isEnabled())
+        self.ui.move(1)
+        self.assertEqual([j.task['task_id'] for j in self.ui.queue.snapshot()], [1, 3, 2])
+
 
 if __name__ == '__main__': unittest.main()

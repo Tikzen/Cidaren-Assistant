@@ -60,27 +60,27 @@ class TaskEngine:
         self.info.right_count = self.info.wrong_count = self.info.skip_count = 0
         self.info.redo_report = None
         if mode in ('redo', 'full') and task['task_type'] != 1:
-            raise JobSkipped('仅支持可重做并自选单词的学习任务，已跳过')
+            raise JobSkipped('只有可重做并自选单词的学习任务能提分，已跳过')
         if mode == 'redo' and float(task.get('progress') or 0) < 100:
-            raise JobSkipped('任务尚未完成，请选择从头开始或一键满分；重做提分仅处理完成后的错词、未满分词')
+            raise JobSkipped('任务还没完成，不能单独提分。可以改用「从头开始」或「一键满分」')
         if mode == 'start':
             if task['task_type'] == 1:
                 self._start_learning(task)
             elif float(task.get('progress') or 0) >= 100:
-                raise JobSkipped('已完成的测试任务不支持重新开始')
+                raise JobSkipped('已完成的测试任务不能重做')
             else:
                 self.execute(task)
             return
         completed_stage = False
         if mode == 'full' and float(task.get('progress') or 0) < 100:
-            self._redo_notice('一键满分：先完成当前刷题流程，再重做未满分词')
+            self._redo_notice('先刷完当前任务，再提分')
             # 满分模式沿用普通续做流程；只有显式“从头开始”才重新完整选词。
             self.execute(task)
             completed_stage = True
         if not self._is_running:
             return
         try:
-            self._redo_notice('重做提分：仅处理错词、未满分词；需要服务端支持重做和自选单词')
+            self._redo_notice('开始提分：只重做错词和未满分的词')
             self.execute(task, redo=True)
         except Exception as error:
             from util.redo_session import RedoStopped
@@ -89,7 +89,7 @@ class TaskEngine:
                 raise kind(str(error)) from error
             if isinstance(error, ApiResponseError) and error.code is not None and error.code not in (11001, 11003):
                 kind = PartialCompletion if completed_stage else JobSkipped
-                raise kind(f'服务端未接受重做：{error.service_message}；已跳过提分') from error
+                raise kind(f'平台不允许重做（{error.service_message}），提分已跳过') from error
             raise
 
     def _start_learning(self, task):
@@ -106,7 +106,7 @@ class TaskEngine:
         if info.is_self_built:
             info.get_book_words_data = data['word_list']
         if data.get('exist_little_task') == 1:
-            self._redo_notice('服务端有进行中小节：先续完该小节，再从头完整选词')
+            self._redo_notice('有一个没做完的小节，先做完它，再从头完整选词')
             self._run_questions(max(500, len(info.word_list) * 50))
             if not self._is_running:
                 return
@@ -114,15 +114,15 @@ class TaskEngine:
         for entry in data.get('word_list', []):
             words.setdefault(f"{entry['course_id']}:{entry['list_id']}", []).append(entry['word'])
         if not words:
-            raise JobSkipped('服务端没有返回可选单词，已跳过')
+            raise JobSkipped('没有可选的单词，已跳过')
         try:
             select_all_word(words, info.task_id)
         except ApiResponseError as error:
             if error.code is not None and error.code not in (11001, 11003):
-                raise JobSkipped(f'服务端不支持重新选词：{error.service_message}') from error
+                raise JobSkipped(f'这个任务不支持重新选词（{error.service_message}），已跳过') from error
             raise
         if not self._run_questions(max(500, len(info.word_list) * 50)):
-            raise JobSkipped('服务端未提供可重新执行的题目，已跳过')
+            raise JobSkipped('没有可以重做的题目，已跳过')
 
     def _run_questions(self, limit):
         get_exam(self.info)
@@ -135,7 +135,7 @@ class TaskEngine:
             seen[code] = seen.get(code, 0) + 1
             steps += 1
             if seen[code] > 3 or steps > limit:
-                raise JobSkipped('题目重复或题数超限，停止当前项并继续队列')
+                raise JobSkipped('题目重复或数量异常，已停止这一项，继续下一项')
             self.info.topic_code = code
             mode = self.info.exam['topic_mode']
             if mode == 0:
@@ -277,7 +277,7 @@ class TaskEngine:
             seen[code] = seen.get(code, 0) + 1
             steps += 1
             if seen[code] > 3 or steps > max(500, len(self.info.word_list) * 50):
-                raise JobSkipped('题目重复或题数超限，停止当前项并继续队列')
+                raise JobSkipped('题目重复或数量异常，已停止这一项，继续下一项')
             mode = self.info.exam['topic_mode']
             self.logger.info(f'题目类型{mode}')
             if mode == 0:
@@ -341,7 +341,7 @@ class TaskEngine:
             seen[code] = seen.get(code, 0) + 1
             steps += 1
             if seen[code] > 3 or steps > max(500, len(self.info.word_list) * 50):
-                raise JobSkipped('题目重复或题数超限，停止当前项并继续队列')
+                raise JobSkipped('题目重复或数量异常，已停止这一项，继续下一项')
             mode = self.info.exam['topic_mode']
             if mode == 0:
                 jump_read(self.info)

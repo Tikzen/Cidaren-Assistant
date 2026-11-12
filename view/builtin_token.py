@@ -61,33 +61,32 @@ class BuiltinTokenDialog(QDialog):
         
     def setup_ui(self):
         """设置 UI 界面"""
-        self.setWindowTitle("内置获取 Token")
-        self.setFixedSize(600, 400)
+        self.setWindowTitle("获取 Token")
+        self.resize(560, 400)
+        self.setMinimumSize(480, 340)
         
         # 主布局
         main_layout = QVBoxLayout(self)
         
         # 标题
-        title_label = QLabel("内置 Token 获取工具")
-        title_label.setStyleSheet("font-size: 16px; font-weight: bold; padding: 10px;")
+        title_label = QLabel("获取 Token")
+        title_label.setStyleSheet("font-size: 16px; font-weight: 600; padding: 4px 0;")
         main_layout.addWidget(title_label)
         
         # 说明文本
         info_text = (
-            "使用说明：\n"
-            "1. 点击'开始捕获'按钮\n"
-            "2. 打开 PC 微信并访词达人学生端\n"
-            "3. 等待自动捕获 UserToken\n"
-            "4. 捕获成功后会自动填充到主界面"
+            "1. 点「开始获取」\n"
+            "2. 在电脑版微信中打开词达人学生端\n"
+            "3. 稍等片刻，获取成功后 Token 会自动填入主窗口"
         )
         info_label = QLabel(info_text)
-        info_label.setStyleSheet("padding: 10px; background-color: palette(alternate-base); border-radius: 5px;")
+        info_label.setStyleSheet("padding: 10px 12px; background-color: palette(alternate-base); border-radius: 6px; line-height: 150%;")
         info_label.setWordWrap(True)
         main_layout.addWidget(info_label)
         
         # 状态显示区域
-        status_label = QLabel("状态信息：")
-        status_label.setStyleSheet("font-weight: bold; padding-top: 10px;")
+        status_label = QLabel("进度")
+        status_label.setStyleSheet("font-weight: 600; padding-top: 6px;")
         main_layout.addWidget(status_label)
         
         self.status_browser = QTextBrowser()
@@ -98,11 +97,11 @@ class BuiltinTokenDialog(QDialog):
         # 按钮布局
         button_layout = QHBoxLayout()
         
-        self.start_button = QPushButton("开始捕获")
+        self.start_button = QPushButton("开始获取")
         self.start_button.clicked.connect(self.start_capture)
         button_layout.addWidget(self.start_button)
         
-        self.stop_button = QPushButton("停止捕获")
+        self.stop_button = QPushButton("停止")
         self.stop_button.clicked.connect(self.stop_capture)
         self.stop_button.setEnabled(False)
         button_layout.addWidget(self.stop_button)
@@ -120,8 +119,8 @@ class BuiltinTokenDialog(QDialog):
         main_layout.addWidget(separator)
         
         # 提示信息
-        hint_label = QLabel("提示：如果捕获失败，请检查是否已安装 mitmproxy 并关闭其他代理软件")
-        hint_label.setStyleSheet("color: palette(text); font-size: 11px; padding: 5px;")
+        hint_label = QLabel("获取不到时，请确认已安装 mitmproxy，并先关闭其他代理软件。")
+        hint_label.setStyleSheet("padding: 2px 0;")
         hint_label.setWordWrap(True)
         main_layout.addWidget(hint_label)
     
@@ -136,7 +135,7 @@ class BuiltinTokenDialog(QDialog):
         """开始捕获 token"""
         if not self.fetch_token_path or not os.path.exists(self.fetch_token_path):
             dialog_logger.error(f"fetch_token 路径不存在: {self.fetch_token_path}")
-            QMessageBox.warning(self, "错误", "fetch_token 路径不存在！")
+            QMessageBox.warning(self, "无法开始", "找不到 Token 获取组件（fetch_token 文件夹），请检查程序文件是否完整。")
             return
         
         dialog_logger.info("点击开始捕获按钮")
@@ -159,7 +158,7 @@ class BuiltinTokenDialog(QDialog):
         self.worker.start()
         
         dialog_logger.info("捕获线程已启动")
-        self.append_status("开始捕获流程...")
+        self.append_status("正在等待微信中的词达人请求…")
     
     def _stop_worker_safely(self):
         """安全停止捕获线程（可重复调用）"""
@@ -174,7 +173,7 @@ class BuiltinTokenDialog(QDialog):
         """停止捕获"""
         dialog_logger.info("点击停止捕获按钮")
         if self.worker and self.worker.isRunning():
-            self.append_status("正在停止捕获...")
+            self.append_status("正在停止…")
         self._stop_worker_safely()
         self.reset_buttons()
     
@@ -187,7 +186,7 @@ class BuiltinTokenDialog(QDialog):
         
         dialog_logger.info(f"捕获到 token: {token[:8]}...")
         self.captured_token = token
-        self.append_status(f"\nToken 已捕获！长度: {len(token)}")
+        self.append_status("已获取 Token")
         
         # 停止工作线程
         self._stop_worker_safely()
@@ -202,8 +201,8 @@ class BuiltinTokenDialog(QDialog):
     def on_error(self, error_message):
         """发生错误"""
         dialog_logger.error(f"捕获过程发生错误: {error_message}")
-        self.append_status(f"\n错误: {error_message}")
-        QMessageBox.critical(self, "错误", f"捕获过程中发生错误:\n\n{error_message}")
+        self.append_status(f"获取失败：{error_message}")
+        QMessageBox.critical(self, "获取失败", error_message)
         self.reset_buttons()
     
     def reset_buttons(self):

@@ -102,26 +102,26 @@ class QueueWorker(QThread):
                         self.queue.update(job.id, state=state, message='已取消' if self.control.cancelled else '已完成',
                                           report=getattr(info, 'redo_report', None), ended=time.time())
                     except PartialCompletion as error:
-                        self.queue.update(job.id, state=State.PARTIAL, message=f'常规刷题已完成；提分跳过：{error}',
+                        self.queue.update(job.id, state=State.PARTIAL, message=f'刷题已完成，提分未进行：{error}',
                                           report=getattr(info, 'redo_report', None), ended=time.time())
                     except JobSkipped as error:
                         self.queue.update(job.id, state=State.SKIPPED, message=str(error),
                                           report=getattr(info, 'redo_report', None), ended=time.time())
                     except SecurityVerifyError as error:
                         self.queue.update(job.id, state=State.VERIFY, message=str(error), ended=time.time())
-                        self.problem.emit('需要安全验证，队列已暂停；完成验证后可继续等待项')
+                        self.problem.emit('需要安全验证，队列已停止。完成验证后点「开始队列」继续剩下的任务')
                         break
                     except RequestCancelled:
-                        self.queue.update(job.id, state=State.CANCELLED, message='已取消；再次执行前会重新获取服务端状态', ended=time.time())
+                        self.queue.update(job.id, state=State.CANCELLED, message='已取消，下次执行会先读取最新进度', ended=time.time())
                         break
                     except SubmissionStateUnknown as error:
                         self.queue.update(job.id, state=State.UNCERTAIN, message=str(error), ended=time.time())
-                        self.notice.emit('当前提交结果需核对，保留该项并继续队列，不自动重发')
+                        self.notice.emit('有一次提交没有收到确认，已标为「提交待核对」，不会自动重发，队列继续')
                     except Exception as error:
                         self.queue.update(job.id, state=State.FAILED, message=str(error), ended=time.time())
-                        self.notice.emit(f'{task["task_name"]} 已结束：{error}；继续下一项')
+                        self.notice.emit(f'{task["task_name"]} 失败：{error}，继续下一项')
                         if isinstance(error, ApiResponseError) and error.code == 11001:
-                            self.problem.emit('账号会话已失效，请重新登录；等待项已保留')
+                            self.problem.emit('登录已失效，请重新登录。队列里的任务都还在')
                             break
                     finally:
                         self.active_id = None
@@ -129,7 +129,7 @@ class QueueWorker(QThread):
                         self.control.paused_seconds = 0
                         self.changed.emit()
         except LockBusy:
-            self.problem.emit('同一账号已在其他窗口运行，当前队列保留，未重复启动')
+            self.problem.emit('这个账号正在其他窗口运行，本窗口没有重复启动')
         except Exception as error:
             logging.getLogger('queue').exception('队列执行结束')
             self.problem.emit(str(error))
