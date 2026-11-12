@@ -1,3 +1,5 @@
+> **声明：本项目无任何盈利目的，仅用于个人开发与学习。如有侵权或冒犯，请通过 [GitHub Issues](https://github.com/Tikzen/Cidaren-Assistant/issues) 联系维护者。**
+
 # 词达人小助手
 
 **2026 持续维护中，更快、更强、更稳定的词达人自动助手。**
