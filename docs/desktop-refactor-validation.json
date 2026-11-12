@@ -1,0 +1,56 @@
+{
+  "branch": "codex/assistant-desktop-refactor",
+  "base_commit": "2e64cff",
+  "scope": "本地桌面、队列、多开和共享存储重构；未创建新远程仓库或推送",
+  "offline": {
+    "command": ".venv/bin/python -m unittest discover -s tests",
+    "tests": 140,
+    "result": "passed",
+    "includes_existing_regression_tests": 75,
+    "coverage": [
+      "任务增删、排序、去重及运行中调整等待顺序",
+      "未完成任务不可勾选单独提分",
+      "已完成任务的一键满分直接进入提分",
+      "逐项刷新完成度及读取失败后继续队列",
+      "不支持重做、无进展、网络耗尽、未知提交、安全验证",
+      "重复题目停止及提分轮次上限",
+      "跨线程账号会话与跨进程账号互斥",
+      "共享答案、错题并发合并无丢失",
+      "无效环境及显式代理下真实本地 HTTP 直连",
+      "Token 捕获互斥不暂停业务，获取结果不改变运行账号",
+      "SQLite FIFO 边界、损坏回退和跨进程复用",
+      "界面按钮、勾选限制、队列入口、提示及登录失败清理"
+    ]
+  },
+  "desktop": {
+    "offscreen_light_dark_render": "passed",
+    "entrypoint_processes_started": 2,
+    "only_own_test_processes_stopped": true,
+    "screenshots": [
+      "screenshots/desktop-light.png",
+      "screenshots/desktop-dark.png"
+    ]
+  },
+  "network_smoke": {
+    "status": "stopped_at_user_request",
+    "login_and_task_reads_observed": true,
+    "new_online_answers_submitted": false,
+    "full_online_acceptance": false,
+    "further_token_access_after_stop": false
+  },
+  "previous_integrated_online_validation": {
+    "report": "redo-until-full-validation.json",
+    "tasks": 8,
+    "words": 240,
+    "all_scores": 100,
+    "rerun_for_this_refactor": false
+  },
+  "limits": [
+    "Windows 原生运行及文件锁尚未在 Windows 设备上复测",
+    "新界面与新队列未执行新的完整在线答题验收；已按要求停止访问运行中的账号"
+  ],
+  "runtime_data_committed": false,
+  "token_committed": false,
+  "github_upload": false,
+  "implementation_commit": "1c7a408"
+}

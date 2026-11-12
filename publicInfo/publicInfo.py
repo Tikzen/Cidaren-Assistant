@@ -1,0 +1,214 @@
+import json
+import os
+
+from log.log import Log
+from util.file_lock import atomic_json
+
+
+def _normalize_interval(min_time, max_time):
+    min_time, max_time = int(min_time), int(max_time)
+    # 旧配置的 0/0 仍使用默认区间, 其余值统一限制为至少 1 秒。
+    if min_time <= 0 and max_time <= 0:
+        return 1, 2
+    return tuple(sorted((max(1, min_time), max(1, max_time))))
+
+
+
+class PublicInfo:
+    # 这俩暂时不知道有啥用
+    task_type: str = 'ClassTask'
+    task_type_int: int = 2
+
+    #
+    def __init__(self, path):
+        self.get_word_list_result = {}
+        self.path = path
+        with open(os.path.join(self.path, "config", "config.json"), 'r', encoding='utf-8') as f:
+            # 用户配置文件
+            user_config = json.load(f)
+            min_time, max_time = _normalize_interval(user_config.get('min_time', 1), user_config.get('max_time', 2))
+            self._min_time = min_time
+            self._max_time = max_time
+            self._spend_min_time = user_config['spend_min_time']
+            self._spend_max_time = user_config['spend_max_time']
+            self._br_choices = user_config['br_choices']
+            self._headers_accept_encoding = user_config['accept_encoding']
+            self._version = user_config['version']
+            self._know_version = user_config['know_version']
+            self._read = user_config['read']
+            self._play_music = user_config.get('play_music', True)  # 默认为True
+            self._music_path = user_config.get('music_path', "")  # 默认为空，使用默认音乐
+            # 兼容模式: 答题异常时猜测答案继续, 保证任务完成
+            self._compat_mode = user_config.get('compat_mode', True)
+            # 自学习开关(独立控制两个记忆库的写入; 关闭只停写入, 读取不受影响)
+            self._self_learn_lib = user_config.get('self_learn_lib', True)  # 答案库 self_learn: 判分答案写入 answer_lib
+            self._self_learn_pool = user_config.get('self_learn_pool', True)  # 词表池 self_learn: word_pool.json 持久化
+
+        # 任务列表
+        self.task_list = ""
+        # 答题对错计数(供进度条右侧统计显示)
+        self.right_count = 0
+        self.wrong_count = 0
+        # 跳过计数(无匹配答案跳过未提交的题)
+        self.skip_count = 0
+        # query_answer
+        self._topic_code = ''
+        self.word_query_result = ''
+        self.word_means = ''
+        self.exam = ''
+        # all word
+        self.word_list = []
+        # 中文释义 -> 英文短语映射(用于汉译英术语课程)
+        self.word_dict = {}
+        # 跨进程加载历史词表(全局词表池, mode 73 兜底跨单元前缀单词)
+        try:
+            with open(os.path.join(self.path, "config", "word_pool.json"), 'r', encoding='utf-8') as f:
+                self.word_dict = json.load(f)
+        except Exception:
+            pass
+        # translate
+        self.zh_en = ''
+        # all unit info
+        self.all_unit = []
+        self.not_complete_unit = {}
+        self.task_id = ''
+        self.now_unit = ''
+        self.course_id = ''
+        self._task_name = ''
+        # class task
+        self.class_task = []
+        # 任务类型选择（默认1）
+        self._task_choices = 1
+        # unit task amount
+        self.task_total_count = ''
+        self.now_page = ''
+        self.release_id = ''
+        # self_built
+        self.get_book_words_data = []
+        self.is_self_built = False  # bool
+        self.all_unit_name = []
+        self.source_option = []
+        pub_info = Log("public_info")
+        pub_info.logger.info("公共组件初始化成功")
+
+    @property
+    # only read
+    def topic_code(self):
+        return self._topic_code
+
+    @topic_code.setter
+    # only write
+    def topic_code(self, value):
+        self._topic_code = value
+
+    @topic_code.deleter
+    # only del
+    def topic_code(self):
+        del self._topic_code
+
+    @property
+    def token(self):
+        return self._token
+
+    @property
+    def task_type_choices(self):
+        return self._task_choices
+
+    @property
+    def min_time(self) -> int:
+        return self._min_time
+
+    @property
+    def max_time(self) -> int:
+        return self._max_time
+
+    @property
+    def spend_min_time(self) -> int:
+        return self._spend_min_time
+
+    @property
+    def spend_max_time(self) -> int:
+        return self._spend_max_time
+
+    @property
+    def accept_encoding(self) -> str:
+        return self._headers_accept_encoding
+
+    @property
+    def br_choices(self) -> bool:
+        return self._br_choices
+
+    @property
+    def play_music(self) -> bool:
+        return self._play_music
+
+    @property
+    def music_path(self) -> str:
+        return self._music_path
+
+    @property
+    def compat_mode(self) -> bool:
+        return self._compat_mode
+
+    @property
+    def version(self) -> str:
+        return self._version
+
+    @property
+    def know_version(self) -> str:
+        return self._know_version
+
+    @property
+    def read(self) -> bool:
+        return self._read
+
+    @property
+    def task_name(self) -> str:
+        return self._task_name
+
+    def read_seen(self):
+        with open(os.path.join(self.path, "config", "config.json"), 'r', encoding="utf-8") as f:
+            data = json.load(f)
+            data['read'] = True
+            self._read = True
+        atomic_json(os.path.join(self.path, 'config/config.json'), data)
+
+    def input_info(self, min_time, max_time, min_time_2, max_time_2, br_choices, accept_encoding, play_music=None, music_path=None,
+                   compat_mode=None):
+        min_time, max_time = _normalize_interval(min_time, max_time)
+        self._min_time = min_time
+        self._max_time = max_time
+        self._spend_min_time = min_time_2
+        self._spend_max_time = max_time_2
+        self._br_choices = br_choices
+        self._headers_accept_encoding = accept_encoding
+        if play_music is not None:
+            self._play_music = play_music
+        if music_path is not None:
+            self._music_path = music_path
+        if compat_mode is not None:
+            self._compat_mode = compat_mode
+
+        with open(os.path.join(self.path, "config", "config.json"), 'r', encoding="utf-8") as f:
+            data = json.load(f)
+            data['min_time'] = self._min_time
+            data['max_time'] = self._max_time
+            data['spend_min_time'] = self._spend_min_time
+            data['spend_max_time'] = self._spend_max_time
+            data['br_choices'] = self._br_choices
+            data['accept_encoding'] = self._headers_accept_encoding
+            if play_music is not None:
+                data['play_music'] = self._play_music
+            if music_path is not None:
+                data['music_path'] = self._music_path
+            if compat_mode is not None:
+                data['compat_mode'] = self._compat_mode
+        data_str = json.dumps(data, indent=2)
+        atomic_json(os.path.join(self.path, 'config/config.json'), data)
+
+    def ignore_version(self, version):
+        with open(os.path.join(self.path, "config", "config.json"), 'r', encoding="utf-8") as f:
+            data = json.load(f)
+            data['know_version'] = version
+            self._know_version = version
+        atomic_json(os.path.join(self.path, 'config/config.json'), data)

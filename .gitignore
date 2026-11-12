@@ -1,0 +1,39 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+
+# Logs
+log/logs/*
+!log/logs/.gitkeep
+*.log
+
+# Token & Local Runtime files
+.git.zip
+get token/fetch_token/token.txt
+get token/fetch_token/capture.log
+config/wrong_memory.json
+
+# Build output
+/dist/
+/build/
+
+# macOS
+.DS_Store
+
+# Local queue state
+config/task_queue.json
+
+# Shared-data write locks
+config/*.lock
+
+# Shared lookup cache
+config/word_cache.sqlite3*
+
+# Local IDE settings
+.idea/

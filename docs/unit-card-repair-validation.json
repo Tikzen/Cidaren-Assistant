@@ -1,0 +1,47 @@
+{
+  "verified_at": "2026-11-12T19:13:37+08:00",
+  "scope": "仅用户指定的新世纪3 U5 Text A 与 U6 Text A，单账号执行锁内顺序执行",
+  "offline_tests": 149,
+  "offline_result": "passed",
+  "tasks": [
+    {
+      "task": "新世纪3 U5 Text A",
+      "score": 100.0,
+      "progress": 100,
+      "unit_score": 100.0,
+      "words": 44,
+      "remaining": 0,
+      "verified_full": true,
+      "before": 97.2
+    },
+    {
+      "task": "新世纪3 U6 Text A",
+      "score": 100.0,
+      "progress": 100,
+      "unit_score": 100.0,
+      "words": 56,
+      "remaining": 0,
+      "verified_full": true,
+      "before": 8.6
+    }
+  ],
+  "independent_verification": "重新建立业务会话，重新读取任务列表和各任务 StudyTask/Info，核对任务分数、单元分数及全部单词状态",
+  "curated_candidate": {
+    "meaning": "排放管制",
+    "candidate": "emission controls",
+    "source": "根据题干与选项人工核对后补入已有共享答案库",
+    "server_result": "最后一轮全部判对，任务从 99.5 提升至 100，未满分词归零"
+  },
+  "limits_retained": {
+    "request_attempts": 5,
+    "redo_rounds": 10,
+    "consecutive_stagnant_rounds": 2,
+    "redo_seconds": 1800
+  },
+  "notes": [
+    "无进展时先停止，定位并修改解析或补足词库后才进行新的有界复测；未取消停止条件",
+    "U5 最后一个词的复测与 U6 最后一个词的复测均一次达到 100",
+    "原始凭证和账号响应仅保存在 Git 私有目录，原有运行数据不纳入提交"
+  ],
+  "github_upload": false
+}

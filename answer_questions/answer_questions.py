@@ -1,0 +1,757 @@
+import random
+import re
+import time
+import json
+from urllib.parse import unquote
+
+from api.main_api import query_word, submit_result, next_exam
+from log.log import Log
+from publicInfo.publicInfo import PublicInfo
+from decryptencrypt.debase64 import debase64
+from util.basic_util import delete_other_char, resolve_word_ci
+from util.answer_lib import lookup, lookup_word
+from util.wrong_memory import lookup as lookup_wrong
+from util.text_norm import norm_key, norm_text
+from util.select_mean import select_mean, handle_query_word_mean, filler_option, select_match_word, word_examples, \
+    is_word_exist
+from util.word_revert import word_revert
+
+query_answer = Log('answer_questions')
+
+
+def _template_slots(content: str):
+    """mode 32 模板空位解析: 返回 (空位token列表, 总词位数)。
+    '_'=1 词位(接受连字符词整体, 如 low-carbon), '_-_'=2 词位(需拆分词 waste,free, 实证 165203)。
+    用正则匹配空位 token(兼容标点粘连如 '_,'/'(_,)'), split() 只识别独立 token"""
+    slots = []
+    total = 0
+    template = re.sub(r'_\s*-\s*_', '_-_', content or '')
+    for m in re.finditer(r'_-_|_', template):
+        tok = m.group(0)
+        if tok == '_':
+            slots.append('_')
+            total += 1
+        else:
+            slots.append('_-_')
+            total += 2
+    return slots, total
+
+
+def _norm_word(w: str) -> str:
+    """去词首尾标点(保留内部连字符/撇号): 'struggle,' -> 'struggle'"""
+    return w.strip(' \t,;:.()[]"\'，。、；：')
+
+
+def _norm_option(text: str) -> str:
+    """选项归一化: 全角/NBSP/尾随空格/大小写/首尾标点"""
+    return _norm_word(norm_text(text))
+
+
+def _option_map(public_info):
+    """题目选项归一化映射: 归一化文本 -> 选项原文(去首尾空白)"""
+    options = [o.get('content') for o in (public_info.exam.get('options') or []) if isinstance(o, dict)]
+    mapping = {}
+    for option in options:
+        if isinstance(option, str):
+            key = _norm_option(option)
+            if key and key not in mapping:
+                mapping[key] = option.strip().replace('\u00a0', ' ')
+    return mapping
+
+
+def _build_phrase_answer(public_info, phrase: str):
+    """
+    mode 32 汉译英填空: 按题目 options 单词池过滤短语中的固定词(and/of/for/the等),
+    按模板空位对齐提交(逗号连接), 服务端按逗号 split 依次填入空位重建比对判分。
+    选项覆盖不了短语或空位数对不上时返回 None(由调用方跳过/猜测), 不提交残缺短语
+    """
+    options = [o.get('content') for o in (public_info.exam.get('options') or []) if isinstance(o, dict)]
+    if not options:
+        return delete_other_char(phrase)
+    opt_map = _option_map(public_info)
+    if not opt_map:
+        return delete_other_char(phrase)
+    max_option_words = max(len(option.split()) for option in opt_map)
+    # 选项段聚合: 短语词序从左到右——优先多词选项段(最长优先, 'all our'/'the country'/'a New Era' 整段占一空位),
+    # 再 1 词匹配(原词优先, 其次去标点 'struggle,'->'struggle', 斜杠备选 'in/at' 取选项中存在的一支);
+    # 未命中视为固定词跳过; 连字符词不在 options 但其拆分词都在 options(waste/free)时保留整体
+    tokens = phrase.split()
+    cand = []
+    i = 0
+    while i < len(tokens):
+        w = tokens[i]
+        matched = False
+        for k in range(max_option_words, 1, -1):
+            if i + k <= len(tokens):
+                seg = ' '.join(tokens[i:i + k])
+                seg_key = _norm_option(seg)
+                if seg_key in opt_map:
+                    cand.append(opt_map[seg_key])
+                    i += k
+                    matched = True
+                    break
+        if matched:
+            continue
+        nw = _norm_option(w)
+        if nw in opt_map:
+            cand.append(opt_map[nw])
+            i += 1
+            continue
+        if '/' in w:
+            alt = next((opt_map[p] for p in (_norm_option(x) for x in w.split('/')) if p in opt_map), None)
+            if alt:
+                cand.append(alt)
+                i += 1
+                continue
+        if '-' in w:
+            parts = [_norm_option(p) for p in w.split('-') if p]
+            if parts and all(p in opt_map for p in parts):
+                cand.append(w)
+                i += 1
+                continue
+        i += 1
+    if not cand:
+        return None
+    # 模板对齐: '_' 空位取 1 词(连字符词整体), '_-_' 空位取连字符词拆 2 词
+    content = public_info.exam.get('stem', {}).get('content', '') if isinstance(public_info.exam, dict) else ''
+    slots, slot_words = _template_slots(content)
+    if slot_words:
+        result = []
+        ci = 0
+        for slot in slots:
+            if ci >= len(cand):
+                break
+            w = cand[ci]
+            if slot == '_-_' and '-' in w:
+                parts = w.split('-')
+                if all(_norm_option(p) in opt_map for p in parts):
+                    result.extend(parts)
+                    ci += 1
+                    continue
+            result.append(w)
+            ci += 1
+        if len(result) == slot_words and ci == len(cand):
+            picked = result
+        else:
+            # 词位对不上: 连字符拆分后再对齐, 仍不匹配则不提交
+            flat = [p for w in cand for p in (w.split('-') if '-' in w else [w])]
+            picked = [p for p in flat if _norm_option(p) in opt_map]
+            if len(picked) != slot_words:
+                query_answer.logger.warning(f"短语空位数不匹配({len(picked)}/{slot_words}): {phrase}")
+                return None
+    else:
+        picked = cand
+    if not picked:
+        return None
+    query_answer.logger.info(f"短语过滤固定词:{cand} -> {picked}")
+    return ','.join(picked)
+
+
+def _best_phrase_answer(public_info, phrases):
+    """遍历全部候选短语, 选选项覆盖最完整的一条; 全部不可用返回 None"""
+    best = None
+    best_parts = 0
+    for phrase in phrases or []:
+        if not isinstance(phrase, str) or not phrase.strip():
+            continue
+        answer = _build_phrase_answer(public_info, phrase)
+        if not answer:
+            continue
+        parts = [p for p in answer.split(',') if p]
+        if len(parts) > best_parts:
+            best, best_parts = answer, len(parts)
+    return best
+
+
+def _match_phrase_by_word_zh(public_info, word_mean):
+    """
+    按中文释义匹配词表中的英文短语(术语课程)
+    :param public_info:
+    :param word_mean:
+    :return:
+    """
+    word_map = getattr(public_info, 'word_dict', None) or {}
+    if not word_map:
+        # 兼容词表未经过 handle_word_result 的场景
+        data = getattr(public_info, 'get_word_list_result', None)
+        try:
+            if isinstance(data, dict) and 'data' in data:
+                raw = data['data']
+                if isinstance(raw, dict):
+                    word_list = raw.get('word_list', [])
+                elif 'jv' in data:
+                    word_list = debase64(raw, data['jv'])['word_list']
+                else:
+                    word_list = []
+                for item in word_list:
+                    word_map[item['word_zh']] = item['word']
+        except Exception as e:
+            query_answer.logger.error(f"词表解析失败:{e}")
+    if not word_map:
+        return None
+    # 精确匹配
+    if word_mean in word_map:
+        return word_map[word_mean]
+    # 归一化匹配(去空白/括号/引号等)
+    pattern = r'[\s（）()“”"\'‘’《》]'
+    norm_mean = re.sub(pattern, '', word_mean)
+    for zh, en in word_map.items():
+        if re.sub(pattern, '', zh) == norm_mean:
+            return en
+    return None
+
+
+# submit
+def submit(public_info: PublicInfo, option: int or str or dict):
+    """
+    提交答案
+    :param public_info:
+    :param option: 选项索引或单词
+    :return: None
+    """
+    public_info.topic_code = public_info.exam['topic_code']
+    # submit result
+    if type(option) == dict:
+        # resolve mode == 31
+        for answer_index in option.values():
+            submit_result(public_info, answer_index)
+    else:
+        submit_result(public_info, option)
+    #
+    time.sleep(random.uniform(0.2, 0.6))
+    # get next exam
+    next_exam(public_info)
+
+
+# skip read word
+def jump_read(public_info):
+    """
+    跳过阅读卡片
+    """
+    time.sleep(random.uniform(0.3, 1.0))
+    query_answer.logger.info("跳过阅读单词卡片")
+    next_exam(public_info)
+    public_info.topic_code = public_info.exam['topic_code']
+
+
+# mean form word
+def select_word(public_info) -> int or str or None:
+    word_mean = public_info.exam['stem']['remark']
+    query_answer.logger.info("汉译英:" + word_mean)
+    stem_content = public_info.exam.get('stem', {}).get('content', '')
+    # 错题记忆命中优先(带题目上下文的标准答案)
+    mem_answers = lookup_wrong(32, stem_content, word_mean)
+    if mem_answers:
+        answer = _best_phrase_answer(public_info, mem_answers)
+        if answer:
+            query_answer.logger.info(f"错题记忆命中:{answer}")
+            return answer
+    # 本地答案库命中优先(标准答案,按题目 options 过滤固定词后逗号提交)
+    lib_answers = lookup(word_mean)
+    if lib_answers:
+        answer = _best_phrase_answer(public_info, lib_answers)
+        if answer:
+            query_answer.logger.info(f"答案库命中:{answer}")
+            return answer
+        query_answer.logger.info(f"答案库候选无法覆盖当前选项:{lib_answers}")
+    # option word
+    options = filler_option(public_info)
+    for option in options:
+        # word is exist word_list
+        if is_word_exist(public_info, option):
+            # two response types
+            if public_info.word_query_result.get('means'):
+                query_result = public_info.word_query_result['means']
+                for means in query_result:
+                    for usage in means['usages']:
+                        phrases_infos = usage['phrases_infos']
+                        if phrases_infos:
+                            for phrases_info in phrases_infos:
+                                # match same mean
+                                if phrases_info['sen_mean_cn'] == word_mean:
+                                    return delete_other_char(phrases_info['sen_content'])
+
+            else:
+                query_result = public_info.word_query_result['options']
+                for content in query_result:
+                    for usage_info in content['content']['usage_infos']:
+                        if usage_info['sen_mean_cn'] == word_mean:
+                            return delete_other_char(usage_info['sen_content'])
+    # 词表短语兜底: 术语课程按中文释义反查英文短语
+    phrase = _match_phrase_by_word_zh(public_info, word_mean)
+    if phrase:
+        query_answer.logger.info(f"词表匹配到短语:{phrase}")
+        return _build_phrase_answer(public_info, unquote(phrase))
+    query_answer.logger.info("查询失败,准备跳过")
+    # exit(-1)
+    return None
+
+
+_CHOICE_MODES = (11, 15, 16, 17, 18, 21, 22, 42)
+
+
+def _memory_choice_index(public_info, mode):
+    """按题目上下文查错题记忆, 在当前选项中定位内容匹配的选项下标; 未命中/多义返回 None"""
+    if mode not in _CHOICE_MODES or not isinstance(public_info.exam, dict):
+        return None
+    stem = public_info.exam.get('stem') or {}
+    answers = lookup_wrong(mode, stem.get('content'), stem.get('remark'))
+    if not answers:
+        return None
+    options = [o.get('content') if isinstance(o, dict) else None
+               for o in (public_info.exam.get('options') or [])]
+    keys = [norm_key(o) for o in options]
+    answer_keys = [norm_key(a) for a in answers if norm_key(a)]
+    # 精确匹配优先
+    exact_hits = {index for index, option_key in enumerate(keys)
+                  if option_key and option_key in answer_keys}
+    if len(exact_hits) == 1:
+        index = exact_hits.pop()
+        query_answer.logger.info(f"错题记忆命中: {options[index]}")
+        return index
+    if exact_hits:
+        return None
+    # 宽松包含匹配仅在唯一命中时采用
+    hits = []
+    for answer_key in answer_keys:
+        for index, option_key in enumerate(keys):
+            if option_key and (option_key in answer_key or answer_key in option_key):
+                hits.append(index)
+    hits = list(dict.fromkeys(hits))
+    if len(hits) == 1:
+        query_answer.logger.info(f"错题记忆命中(宽松): {options[hits[0]]}")
+        return hits[0]
+    return None
+
+
+def word_form_mean(public_info: PublicInfo) -> int:
+    """
+    英译汉
+    :param public_info:
+    :return:
+    """
+    query_answer.logger.info("英译汉")
+    memory_index = _memory_choice_index(public_info, public_info.exam.get('topic_mode'))
+    if memory_index is not None:
+        return memory_index
+    # is listen
+    exam = public_info.exam['stem']['content'].replace(' ', "")
+    # 题干格式xxx{word}xxx
+    query_answer.logger.info(f"从{exam}提取单词")
+    word = re.findall("{(.*?)}", exam)
+    query_answer.logger.info(f"提取到{word}")
+    word = word[0] if word else exam
+    # 大小写无关匹配优先(句首大写 Insert -> 词表 insert)
+    resolved = resolve_word_ci(public_info.word_list, word)
+    if resolved is not None:
+        word = resolved
+    else:
+        # 判断单词是否在单词列表中
+        stem = None
+        if word.endswith("ed"):
+            stem = word[:-2]
+        elif word.endswith("ing"):
+            stem = word[:-3]
+        resolved = resolve_word_ci(public_info.word_list, stem) if stem else None
+        if resolved is not None:
+            word = resolved
+        else:
+            query_answer.logger.info(f"将{word}转原型")
+            # 单词转原型
+            original = word
+            word = word_revert(word) or word
+            resolved = resolve_word_ci(public_info.word_list, word)
+            if resolved is None:
+                # 模型对孤立的 satisfied、hung 等可能仍返回原词形。
+                # 沿用重做流程的服务端原型核对，并严格限制到当前单元词表。
+                from api.basic_api import use_api_get_prototype
+                cache = getattr(public_info, '_word_form_cache', None)
+                if cache is None:
+                    cache = public_info._word_form_cache = {}
+                key = (getattr(public_info, 'course_id', ''), getattr(public_info, 'now_unit', ''), original.lower())
+                if key not in cache:
+                    cache[key] = use_api_get_prototype(original)
+                resolved = resolve_word_ci(public_info.word_list, cache[key])
+                if resolved is None:
+                    raise LookupError(f'无法将词形 {original} 对应到当前单元词表，未请求无效单词卡片')
+                query_answer.logger.info(f'服务端原型核对：{original} → {resolved}')
+            word = resolved
+    # 请求单词释义
+    query_word(public_info, word)
+    # 提取释义
+    handle_query_word_mean(public_info)
+    query_answer.logger.info('选择意思')
+    # 选择正确释义
+    return select_mean(public_info)
+
+
+def mean_to_word(public_info):
+    """
+    看义选词
+    :param public_info:
+    :return:
+    """
+    # mode 17
+    memory_index = _memory_choice_index(public_info, public_info.exam.get('topic_mode'))
+    if memory_index is not None:
+        return memory_index
+    word_mean = public_info.exam['stem']['content']
+    # match answer
+    return select_match_word(public_info, word_mean)
+
+
+# select together word
+def together_word(public_info) -> dict:
+    query_answer.logger.info("意思相似单词")
+    # exam options
+    options = filler_option(public_info)
+    # answer
+    result_word = {word['relation']: public_info.source_option.index(word['relation'])
+                   for word in public_info.exam['stem']['remark']}
+    query_answer.logger.info(f"选项{options}")
+    query_answer.logger.info(f"答案{result_word}")
+    return result_word
+
+
+# complete a sentence
+def _sentence_option_answer(option, word):
+    """按选项类型编码答案; 字符串标签需拼接词形下标。"""
+    tag = option.get('answer_tag')
+    if isinstance(tag, str):
+        sub_options = option.get('sub_options') or []
+        for sub_option in sub_options:
+            if word is None or norm_text(sub_option.get('content')) == norm_text(word):
+                return tag + str(sub_option['answer_tag'])
+        return None if sub_options else tag + '0'
+    return tag
+
+
+def full_sentence(public_info) -> int or str:
+    query_answer.logger.info("选择最合适的单词完成句子")
+    memory_index = _memory_choice_index(public_info, public_info.exam.get('topic_mode'))
+    if memory_index is not None:
+        option = public_info.exam['options'][memory_index]
+        encoded = _sentence_option_answer(option, option.get('content'))
+        if encoded is not None:
+            return encoded
+    options = filler_option(public_info)
+    # 单词库命中优先(mode 42: answer_corrects 下标对应的正确答案单词)
+    remark = public_info.exam.get('stem', {}).get('remark') if isinstance(public_info.exam, dict) else None
+    word_answers = lookup_word(remark)
+    if word_answers:
+        # 排除题干中已出现的固定词(如 environmentally {} manufacturing 中 manufacturing),
+        # 避免单词库含完整短语多个词时定位到固定词(如 绿色制造 误选 manufacturing 而非 conscious)
+        content = public_info.exam.get('stem', {}).get('content', '') if isinstance(public_info.exam, dict) else ''
+        fixed = set(re.findall(r'[A-Za-z]+', content.replace('{}', ' ').replace('{', ' ').replace('}', ' ')))
+        fixed = {w.lower() for w in fixed}
+        lower_words = [w.lower() for w in word_answers if w.lower() not in fixed]
+        if not lower_words:
+            lower_words = [w.lower() for w in word_answers]
+        for option in public_info.exam['options']:
+            if isinstance(option, dict) and option.get('content', '').lower() in lower_words:
+                query_answer.logger.info(f"单词库命中,提交{option.get('content')}(tag={option.get('answer_tag')})")
+                encoded = _sentence_option_answer(option, option.get('content'))
+                if encoded is not None:
+                    return encoded
+    # word in examples sentence
+    word = word_examples(public_info, options)
+    # extract answer tag
+    for option in public_info.exam['options']:
+        # match answer
+        option_word = option['answer_tag']
+        if type(option_word) == str:
+            if option['sub_options']:
+                for sub_option in option['sub_options']:
+                    if sub_option['content'] == word:
+                        return option_word + str(sub_option['answer_tag'])
+            # no need to  match  tenses
+            if option['content'] == word:
+                return option_word + '0'
+        else:
+            if option['content'] == word:
+                return option_word
+    query_answer.logger.error("补全句子失败,猜第3个选项")
+    # submit 1#0,0#2 or 1 应该分开写提升正确率
+    return _sentence_option_answer(public_info.exam['options'][2], None)
+
+
+# full word
+def complete_sentence(public_info):
+    query_answer.logger.info("补全单词")
+    word_len = public_info.exam['w_lens'][0]
+    # submit not  case sensitive
+    word_start_with = public_info.exam['w_tip'].lower()
+    # iterate over all word in the unit
+    for word in public_info.word_list:
+        if word.startswith(word_start_with):
+            query_answer.logger.info(word)
+            if len(word) == word_len:
+                return word
+            elif len(word) + 1 == word_len:
+                return word + 's'
+            else:
+                result = word_examples(public_info, [word])
+                if result:
+                    return result
+    query_answer.logger.error(f"找不到答案,提交{word}")
+    return word
+
+
+# mode 73: 多空首字母补全单词(提交JSON数组)
+def _match_tips_words(tips, word_lens, words, strict_len=True, exclude=None):
+    """按 tips 前缀(可选长度)匹配单词, 全部匹配返回列表, 否则 None. exclude=题干固定词集合(小写), 匹配时跳过"""
+    exclude = exclude or set()
+    answers = []
+    for i, tip in enumerate(tips):
+        wlen = word_lens[i] if i < len(word_lens) else None
+        matched = None
+        for w in words:
+            if w.lower() in exclude:
+                continue
+            if w.lower().startswith(tip.lower()) and (not strict_len or not wlen or len(w) == int(wlen)):
+                matched = w
+                break
+        if matched is None:
+            return None
+        answers.append(matched)
+    return answers
+
+
+def _candidate_words(public_info, remark):
+    """mode 73 候选答案单词池(合并): 短语库[0] -> 单词库(变体) -> 词表短语, 按空白/连字符/括号拆分, 去重保序"""
+    pool = []
+    lib_answers = lookup(remark)
+    if lib_answers:
+        pool += [w for w in re.split(r'[\s\-(),]+', lib_answers[0]) if w]
+    word_answers = lookup_word(remark)
+    if word_answers:
+        pool += list(word_answers)
+    phrase = _match_phrase_by_word_zh(public_info, remark)
+    if phrase:
+        pool += [w for w in re.split(r'[\s\-(),]+', unquote(phrase)) if w]
+    return list(dict.fromkeys(pool)) or None
+
+
+def _global_word_pool(public_info):
+    """全局词表单词池: 所有词条英文短语按 空白/连字符/括号/斜杠 拆分, 去重保序。
+    mode 73 前缀单词(如 utilization/conservation/transform)常存在于其他词条词表中,
+    候选池按词条隔离用不到, 此池跨词条兜底"""
+    word_map = getattr(public_info, 'word_dict', None) or {}
+    if not word_map:
+        return None
+    pool = []
+    for en in word_map.values():
+        pool += [w for w in re.split(r'[\s\-(),/]+', unquote(en)) if w]
+    return list(dict.fromkeys(pool)) or None
+
+
+def complete_spelling(public_info):
+    query_answer.logger.info("补全拼写")
+    content = public_info.exam['stem']['content']
+    remark = public_info.exam['stem']['remark']
+    tips = re.findall(r'\{(\w+)\}', content)
+    word_lens = public_info.exam.get('w_lens') or []
+    # 题干固定词(如 {gr}{sto} 前的 green、Lucid waters 中的 Lucid、and 等), 前缀匹配时排除,
+    # 避免误把固定词当空位答案(green->gr、and->a、Lucid->lu)
+    fixed = set(w.lower() for w in re.findall(r'[A-Za-z]+', re.sub(r'\{[^}]*\}', ' ', content)))
+    # 服务端返回的是按空位排序的单词, 保留顺序和连字符, 优先于共享答案库。
+    mem_answers = lookup_wrong(73, content, remark)
+    slot_count = len(tips) if tips else content.count('{}')
+    if mem_answers and slot_count and len(mem_answers) == slot_count:
+        matches = all(
+            (not tips or word.lower().startswith(tips[i].lower()))
+            and (i >= len(word_lens) or not word_lens[i] or len(word) == int(word_lens[i]))
+            for i, word in enumerate(mem_answers)
+        )
+        if matches:
+            query_answer.logger.info(f"错题记忆命中,补全拼写结果:{mem_answers}")
+            return json.dumps(mem_answers)
+    if not tips:
+        # 无前缀空位题({}): 候选单词 ∩ 题目 options(答案单词池) 直接提交
+        slot_count = content.count('{}')
+        options = [o.get('content') for o in (public_info.exam.get('options') or []) if isinstance(o, dict)]
+        opt_lower = [o.lower() for o in options if isinstance(o, str)]
+        candidates = _candidate_words(public_info, remark)
+        if candidates:
+            picked = [w for w in candidates if w.lower() in opt_lower]
+            if picked:
+                answers = picked[:slot_count] if slot_count else picked
+                query_answer.logger.info(f"无前缀空位命中,补全拼写结果:{answers}")
+                return json.dumps(answers)
+        query_answer.logger.error("补全拼写失败:无前缀空位无匹配")
+        return None
+    # 1. 本地答案库短语命中(标准答案,按前缀匹配单词)
+    lib_answers = lookup(remark)
+    if lib_answers:
+        # 按 空白/连字符/括号/斜杠 拆分(air/atmospheric -> air, atmospheric)
+        words = [w for w in re.split(r'[\s\-(),/]+', lib_answers[0]) if w]
+        answers = _match_tips_words(tips, word_lens, words, exclude=fixed)
+        if answers:
+            query_answer.logger.info(f"答案库命中,补全拼写结果:{answers}")
+            return json.dumps(answers)
+    # 2. 单词库命中(同义变体,如 {sup}->supervision; 由 mode 42 提交后捕获)
+    word_answers = lookup_word(remark)
+    if word_answers:
+        answers = _match_tips_words(tips, word_lens, word_answers, strict_len=False, exclude=fixed)
+        if answers:
+            query_answer.logger.info(f"单词库变体命中,补全拼写结果:{answers}")
+            return json.dumps(answers)
+    # 3. 词表短语兜底
+    phrase = _match_phrase_by_word_zh(public_info, remark)
+    if phrase:
+        words = unquote(phrase).split()
+        answers = _match_tips_words(tips, word_lens, words, exclude=fixed)
+        if answers:
+            query_answer.logger.info(f"补全拼写结果:{answers}")
+            return json.dumps(answers)
+    # 4. 合并候选池兜底(跨来源组合, 如 {ze}-{wa} -> zero+waste): 先严格长度, 失败再宽松
+    candidates = _candidate_words(public_info, remark)
+    if candidates:
+        answers = _match_tips_words(tips, word_lens, candidates, exclude=fixed)
+        if answers:
+            query_answer.logger.info(f"合并候选池命中,补全拼写结果:{answers}")
+            return json.dumps(answers)
+        answers = _match_tips_words(tips, word_lens, candidates, strict_len=False, exclude=fixed)
+        if answers:
+            query_answer.logger.info(f"合并候选池宽松命中,补全拼写结果:{answers}")
+            return json.dumps(answers)
+    # 5. 全局词表单词池兜底(前缀单词在其他词条词表中, 如 {uti}->utilization、{con}->conservation、{tra}->transform)
+    gpool = _global_word_pool(public_info)
+    if gpool:
+        answers = _match_tips_words(tips, word_lens, gpool, exclude=fixed)
+        if answers:
+            query_answer.logger.info(f"全局词表命中,补全拼写结果:{answers}")
+            return json.dumps(answers)
+        # 宽松兜底(如 {res}->resources 9 位 vs w_lens 8): 提交判错 -> answer_corrects 入库 -> 下次自愈(判错优于永远跳过)
+        answers = _match_tips_words(tips, word_lens, gpool, strict_len=False, exclude=fixed)
+        if answers:
+            query_answer.logger.info(f"全局词表宽松命中,补全拼写结果:{answers}")
+            return json.dumps(answers)
+    query_answer.logger.error(f"补全拼写失败:未匹配到前缀")
+    return None
+
+
+def answer(public_info, mode):
+    '''
+    15 看词选义（一星）
+    16 看词选义（二星）
+    17 看义选词（一星）
+    18 看义选词（二星）
+    :param mode: 题型编号
+    :return:
+    '''
+    if mode == 11:
+        option = word_form_mean(public_info)
+    elif mode == 13:
+        # guess option 没思路
+        option = 3
+    elif mode == 15 or mode == 16 or mode == 21 or mode == 22:
+        option = word_form_mean(public_info)
+        # 英译汉
+    elif mode == 17 or mode == 18:
+        option = mean_to_word(public_info)
+    elif mode == 31:
+        option = together_word(public_info)
+    elif mode == 32:
+        option = select_word(public_info)
+        query_answer.logger.info(f'翻译结果{option}')
+    elif mode == 41 or mode == 42 or mode == 43 or mode == 44:
+        option = full_sentence(public_info)
+        query_answer.logger.info(f'提交选项{option}')
+    # mode == 43  "content":"Reading  is  of  {}  importance  in  language  learning.","remark":"阅读在语言学习中至关重要。" 选时态
+    elif mode == 51 or mode == 52 or mode == 53 or mode == 54:
+        option = complete_sentence(public_info)
+        query_answer.logger.info(f'补全单词结果{option}')
+    elif mode == 73:
+        option = complete_spelling(public_info)
+        query_answer.logger.info(f'补全拼写结果{option}')
+    else:
+        option = 0
+        query_answer.logger.error(public_info.exam)
+        query_answer.logger.error(f"其他题型{mode},程序退出")
+        # 此处抛出异常
+        raise Exception
+    return option
+
+
+def guess_answer(public_info, mode):
+    """兼容模式: 答题异常时生成格式合法的猜测答案, 无法生成返回 None"""
+    exam = public_info.exam
+    if not isinstance(exam, dict):
+        return None
+    try:
+        options = exam.get('options') or []
+        contents = [o.get('content') for o in options if isinstance(o, dict)]
+        n = len(options)
+        if mode in (11, 15, 16, 17, 18, 21, 22):
+            return random.randrange(n) if n else None
+        if mode == 13:
+            return 3
+        if mode == 31:
+            relations = exam.get('stem', {}).get('remark') or []
+            if not n or not isinstance(relations, list) or not relations:
+                return None
+            indexes = list(range(n))
+            random.shuffle(indexes)
+            return {rel['relation']: indexes[i % n]
+                    for i, rel in enumerate(relations)
+                    if isinstance(rel, dict) and 'relation' in rel}
+        if mode == 32:
+            _, slot_words = _template_slots(exam.get('stem', {}).get('content', ''))
+            words = [c for c in contents if c]
+            if not words:
+                return None
+            count = slot_words or 1
+            return ','.join(words[i % len(words)] for i in range(count))
+        if mode in (41, 42, 43, 44):
+            if not options:
+                return None
+            option = options[2] if n >= 3 else options[0]
+            return _sentence_option_answer(option, None)
+        if mode in (51, 52, 53, 54):
+            w_lens = exam.get('w_lens') or []
+            w_len = int(w_lens[0]) if w_lens else 0
+            tip = (exam.get('w_tip') or '').lower()
+            words = public_info.word_list or []
+            for w in words:
+                if isinstance(w, str) and w.lower().startswith(tip) and (not w_len or len(w) == w_len):
+                    return w
+            for w in words:
+                if isinstance(w, str) and w_len and len(w) == w_len:
+                    return w
+            if tip:
+                return tip + 'a' * max(0, w_len - len(tip))
+            return None
+        if mode == 73:
+            content = exam.get('stem', {}).get('content', '')
+            tips = re.findall(r'\{(\w+)\}', content)
+            if not tips:
+                slot_count = content.count('{}')
+                pool = [c for c in contents if c]
+                if slot_count and pool:
+                    return json.dumps([pool[i % len(pool)] for i in range(slot_count)])
+                return None
+            w_lens = exam.get('w_lens') or []
+            pool = [w for w in (public_info.word_list or []) if isinstance(w, str)]
+            pool += [w for w in (_global_word_pool(public_info) or []) if isinstance(w, str)]
+            answers = []
+            for i, tip in enumerate(tips):
+                w_len = int(w_lens[i]) if i < len(w_lens) and w_lens[i] else 0
+                matched = None
+                for w in pool:
+                    if w.lower().startswith(tip.lower()) and (not w_len or len(w) == w_len):
+                        matched = w
+                        break
+                if matched is None:
+                    for w in pool:
+                        if w_len and len(w) == w_len:
+                            matched = w
+                            break
+                if matched is None:
+                    matched = tip + 'a' * max(0, w_len - len(tip))
+                answers.append(matched)
+            return json.dumps(answers)
+    except Exception as e:
+        query_answer.logger.error(f"兼容模式猜测答案失败: {e}")
+        return None
+    return None
