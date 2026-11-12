@@ -1,0 +1,49 @@
+name: Windows EXE build probe
+on:
+  push:
+    branches: [codex/windows-exe-build]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    env:
+      QT_QPA_PLATFORM: offscreen
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt "numpy<2" pyinstaller==6.22.3
+      - name: Offline regression tests
+        run: python -m unittest discover -s tests
+      - name: Build native Windows binaries
+        run: python -m PyInstaller --noconfirm --clean packaging/windows.spec
+      - name: Smoke-test frozen binaries
+        run: python packaging/verify_windows.py
+      - name: Create portable archive
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist/CidarenAssistant-Windows-x64 -DestinationPath dist/CidarenAssistant-Windows-x64.zip
+          Get-FileHash dist/CidarenAssistant-Windows-x64.zip -Algorithm SHA256 | Format-List | Out-File dist/SHA256.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Windows-build-diagnostics
+          path: |
+            build/windows-*.json
+            build/windows-*.png
+            build/windows/warn-*.txt
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CidarenAssistant-Windows-x64
+          compression-level: 0
+          path: |
+            dist/CidarenAssistant-Windows-x64.zip
+            dist/SHA256.txt
