@@ -1,0 +1,59 @@
+name: Publish verified Windows preview
+on:
+  push:
+    branches: [codex/windows-exe-publish]
+  workflow_dispatch:
+permissions:
+  actions: read
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: Tikzen/Cidaren-Assistant
+      TAG: v0.1.0-windows-preview.1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: CidarenAssistant-Windows-x64
+          run-id: 43236706262
+          github-token: ${{ github.token }}
+          path: release-assets
+      - name: Verify checksum, portable layout and Windows architecture
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,re,struct,zipfile
+          root=Path('release-assets')
+          binary=root/'CidarenAssistant-Windows-x64.zip'
+          expected=re.search(r'\b[A-Fa-f0-9]{64}\b',(root/'SHA256.txt').read_text(encoding='utf-8-sig')).group().lower()
+          actual=hashlib.sha256(binary.read_bytes()).hexdigest()
+          assert actual==expected,'Portable archive SHA-256 mismatch'
+          with zipfile.ZipFile(binary)as archive:
+              assert archive.testzip()is None
+              names=archive.namelist()
+              for exe in ('CidarenAssistant.exe','mitmdump.exe'):
+                  matches=[p for p in names if p.endswith('/'+exe)]
+                  assert len(matches)==1,(exe,matches)
+                  data=archive.read(matches[0]);assert data[:2]==b'MZ'
+                  offset=struct.unpack_from('<I',data,0x3c)[0]
+                  assert data[offset:offset+4]==b'PE\x00\x00'
+                  assert struct.unpack_from('<H',data,offset+4)[0]==0x8664
+              assert any(name.endswith('/qwindows.dll')for name in names)
+              assert not any(Path(name).name in ('token.txt','wrong_memory.json','word_cache.sqlite3')for name in names)
+          (root/'SHA256SUMS.txt').write_text(actual+'  '+binary.name+'\n',encoding='utf-8')
+          (root/'SHA256.txt').unlink()
+          print('SHA-256, x64 PE headers, native Windows Qt plugin and clean bundle verified.')
+          PY
+      - name: Create release with verified assets
+        run: |
+          gh release create "$TAG" release-assets/CidarenAssistant-Windows-x64.zip release-assets/SHA256SUMS.txt \
+            --target 0012df09f6569d638e16ed363997ace716cc34d7 \
+            --draft --prerelease \
+            --title 'v0.1.0 Windows x64 预览版' \
+            --notes-file packaging/windows-release-notes.md
+          gh release edit "$TAG" --draft=false --prerelease
+          gh release view "$TAG" --json url,isDraft,isPrerelease,assets
