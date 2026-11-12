@@ -1,4 +1,4 @@
-**[📖 使用教程：启动、登录、队列与自动提分](docs/使用教程.md)**
+**[📖 图文使用教程：登录、队列与自动提分](docs/使用教程.md)**
 
 > **声明：本项目无任何盈利目的，仅用于个人开发与学习。如有侵权或冒犯，请通过 [GitHub Issues](https://github.com/Tikzen/Cidaren-Assistant/issues) 联系维护者。**
 
