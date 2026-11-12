@@ -354,18 +354,6 @@ class AssistantWindow(QMainWindow):
         actions.addWidget(self.add_all_button)
         actions.addStretch()
         actions.addWidget(self.add_button)
-        divider = QFrame()
-        divider.setObjectName('divider')
-        divider.setFixedHeight(20)
-        actions.addSpacing(4)
-        actions.addWidget(divider)
-        actions.addSpacing(4)
-        self.full_button = self.button('一键满分', self.add_full)
-        self.full_button.setToolTip(app_info.FULL_TIP)
-        actions.addWidget(self.full_button)
-        self.full_badge = InfoBadge(app_info.FULL_TIP)
-        actions.addWidget(self.full_badge)
-        actions.addSpacing(4)
         self.start_task_button = self.button('开始任务', self.start_selected, 'primary')
         self.start_task_button.setToolTip('把选中的任务加到队尾，然后开始执行队列。\n队列里已有的任务会先执行。')
         actions.addWidget(self.start_task_button)
@@ -445,6 +433,13 @@ class AssistantWindow(QMainWindow):
         self.pause_button = self.button('暂停', self.pause_queue)
         self.stop_button = self.button('中止任务', self.stop_queue, 'danger')
         self.stop_button.setToolTip('停止当前任务，其余任务保留在队列中')
+        # 一键满分同样先排到队尾再按队列执行，所以和队列的运行控制放在一起
+        self.full_button = self.button('一键满分', self.add_full)
+        self.full_button.setToolTip('把左侧选中的任务以「一键满分」加到队尾，并开始执行队列。\n\n' + app_info.FULL_TIP)
+        self.full_badge = InfoBadge(app_info.FULL_TIP)
+        run_row.addWidget(self.full_button)
+        run_row.addWidget(self.full_badge)
+        run_row.addSpacing(6)
         run_row.addWidget(self.run_button, 1)
         run_row.addWidget(self.pause_button, 1)
         run_row.addWidget(self.stop_button, 1)
@@ -1014,7 +1009,7 @@ class AssistantWindow(QMainWindow):
         self._update_queue_actions()
 
     def _update_task_actions(self):
-        if not hasattr(self, 'start_task_button'): return
+        if not hasattr(self, 'full_button'): return
         usable = bool(self.account) and not getattr(self, '_other_running_now', False)
         chosen = bool(self._rows())
         self.add_all_button.setEnabled(usable and self.task_table.rowCount() > 0)
