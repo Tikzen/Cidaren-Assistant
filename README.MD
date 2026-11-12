@@ -1,4 +1,4 @@
-**[📖 图文使用教程：登录、队列与自动提分](docs/使用教程.md)**
+**[📖 图文使用教程：启动、登录、队列与自动提分](docs/使用教程.md)**
 
 > **声明：本项目无任何盈利目的，仅用于个人开发与学习。如有侵权或冒犯，请通过 [GitHub Issues](https://github.com/Tikzen/Cidaren-Assistant/issues) 联系维护者。**
 
@@ -87,28 +87,14 @@
 
 ## 运行
 
-当前提供源码运行，桌面 UI 已完成改版并支持系统明暗主题，macOS 独立安装包尚未发布。界面预览见 [界面优化说明](docs/ui-optimization.md)。
+| 系统 | 启动方式 |
+| --- | --- |
+| **Windows** | 前往 [Releases](https://github.com/Tikzen/Cidaren-Assistant/releases)，下载 `CidarenAssistant-Windows-x64.zip`，完整解压后双击 `CidarenAssistant.exe`。无需另装 Python。 |
+| **macOS** | 在 [项目主页](https://github.com/Tikzen/Cidaren-Assistant) 点击 **Code → Download ZIP**，解压源码后双击 `点我运行_mac.command`，先检查本地环境再启动。 |
 
-使用 Python 3.12 创建环境、安装依赖后启动：
+macOS 源码运行需要 Python 3.12 环境；缺少项目虚拟环境时，脚本会尝试创建环境并安装依赖。首次运行请等待依赖安装完成，运行过程中保留终端窗口。
 
-```sh
-git clone https://github.com/Tikzen/Cidaren-Assistant.git
-cd Cidaren-Assistant
-python3.12 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt
-python main.py
-```
-
-Windows 可使用 Python 3.12 创建虚拟环境，并通过 `.venv\Scripts\python.exe` 安装依赖、运行 `main.py`。
-
-已有开发环境可以直接运行：
-
-```sh
-.venv/bin/python main.py
-```
-
-登录后选择任务、加入队列、调整顺序，再开始执行。需要单独提分时，勾选完成度 100% 的学习任务；需要自动衔接刷题和提分时，使用一键满分。
+详细步骤见 [图文使用教程](docs/使用教程.md)。桌面 UI 已完成改版并支持系统明暗主题，界面预览见 [界面优化说明](docs/ui-optimization.md)。
 
 ## 来源与许可
 
