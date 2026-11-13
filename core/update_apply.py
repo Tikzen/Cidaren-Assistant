@@ -185,7 +185,7 @@ function InstallFile($source,$target) {
   $temp = $target+'.update-'+[guid]::NewGuid().ToString('N')
   try {
     [IO.File]::Copy($source,$temp,$true)
-    if ([IO.File]::Exists($target)) { [IO.File]::Replace($temp,$target,$null) }
+    if ([IO.File]::Exists($target)) { [IO.File]::Replace($temp,$target,[NullString]::Value) }
     else { [IO.File]::Move($temp,$target) }
   } finally { if ([IO.File]::Exists($temp)) { [IO.File]::Delete($temp) } }
 }

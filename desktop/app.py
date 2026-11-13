@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 import sys
 from PyQt6.QtWidgets import QApplication, QMessageBox
+from PyQt6.QtCore import QTimer
 from app_info import NAME
 from core.instances import instance_lease, update_in_progress
 from util.app_path import app_root
@@ -16,7 +17,10 @@ def run():
     root = str(app_root())
     with instance_lease(root):
         if update_in_progress(root):
-            QMessageBox.information(None, '正在更新', '更新助手正在替换程序文件，请等待自动重新启动。')
+            notice = QMessageBox(QMessageBox.Icon.Information, '正在更新',
+                                 '更新助手正在替换程序文件，请等待自动重新启动。')
+            QTimer.singleShot(1500, notice.accept)
+            notice.exec()
             return 0
         window = AssistantWindow(PublicInfo(root), root)
         result = Path(root) / '.update-result.json'
