@@ -3,14 +3,14 @@ import logging
 import random
 import time
 import requests
-from answer_questions.answer_questions import answer, guess_answer, submit, jump_read
+from answer_questions.answer_questions import answer, guess_answer, submit, jump_read, has_answer
 from api.basic_api import get_all_unit, get_unit_words, get_book_all_words
-from api.main_api import get_exam, select_all_word, skip_exam, SecurityVerifyError, ApiResponseError
+from api.main_api import get_exam, select_all_word, SecurityVerifyError, ApiResponseError
 from util.basic_util import extract_book_word, query_word_unit
 from util.handle_word_list import handle_word_result
 from decryptencrypt.debase64 import debase64
 from core.control import RunControl
-from core.outcome import JobSkipped, PartialCompletion
+from core.outcome import JobSkipped, PartialCompletion, UnanswerableQuestion
 
 
 class EventSink:
@@ -143,11 +143,7 @@ class TaskEngine:
                 jump_read(self.info)
             else:
                 option = self._answer_question(self.info, mode)
-                if option is None:
-                    self.info.skip_count += 1
-                    skip_exam(self.info)
-                else:
-                    submit(self.info, option)
+                submit(self.info, option)
                 self._pacing_delay(self.info)
             self.emit_progress()
         return True
@@ -205,34 +201,44 @@ class TaskEngine:
                 self.class_task_answer()
 
     def _answer_question(self, public_info, mode):
-        """网络故障由请求层原地重试; 无法恢复时上抛, 数据/解析错误猜测或跳过当前题。"""
+        """没找到答案时猜答；可恢复的解析异常由兼容模式兜底，不自动跳题。"""
+        reason = '未找到确定答案'
         try:
             session = getattr(public_info, 'redo_session', None)
             if session is not None:
                 cached = session.answer(public_info)
-                if cached is not None:
+                if has_answer(cached):
                     self.logger.info(f'单任务错题缓存命中: key={session.key(public_info.exam)} answer={cached}')
                     return cached
                 form_answer = session.word_form_answer(public_info)
-                if form_answer is not None:
+                if has_answer(form_answer):
                     return form_answer
             proposed = self.answer_fn(public_info, mode)
-            return session.adjust(public_info, proposed) if session is not None else proposed
-        except (SecurityVerifyError, ApiResponseError):
+            proposed = session.adjust(public_info, proposed) if session is not None else proposed
+            if has_answer(proposed):
+                return proposed
+        except (SecurityVerifyError, ApiResponseError, requests.exceptions.RequestException):
             raise
-        except requests.exceptions.RequestException:
+        except Exception as error:
+            if not getattr(public_info, 'compat_mode', True):
+                # 关闭兼容模式时保留用户要求的严格报错，但仍禁止自动跳过。
+                raise
+            reason = f'答案解析异常（{error}）'
+            self.logger.error(reason, exc_info=True)
+        try:
+            guessed = self.guess_fn(public_info, mode)
+        except (SecurityVerifyError, ApiResponseError, requests.exceptions.RequestException):
             raise
-        except Exception as e:
-            if getattr(public_info, 'compat_mode', True):
-                self.logger.error(f"答题异常，兼容模式猜测答案：{e}", exc_info=True)
-                guessed = self.guess_fn(public_info, mode)
-                if guessed is not None:
-                    self.logger.info(f"兼容模式猜测答案：{guessed}")
-                    return guessed
-                self.logger.error("兼容模式无法生成猜测答案，跳过当前题")
-            else:
-                self.logger.error(f"答题异常，跳过当前题：{e}", exc_info=True)
-            return None
+        except Exception as error:
+            raise UnanswerableQuestion(f'题型 {mode} 无法生成猜测答案：{error}；已停止当前项，未跳题') from error
+        if not has_answer(guessed):
+            raise UnanswerableQuestion(f'题型 {mode} 缺少选项或作答结构不受支持，无法猜答；已停止当前项，未跳题')
+        message = f'{reason}，题型 {mode} 改用猜测作答'
+        self.logger.warning(f'{message}：{guessed}')
+        notice = getattr(self, 'task_notice', None)
+        if notice is not None:
+            notice.emit(message)
+        return guessed
 
     def _pacing_delay(self, public_info):
         """题间随机节奏, 偶尔加入长停顿, 避免固定间隔"""
@@ -287,12 +293,7 @@ class TaskEngine:
                 self.emit_progress()
                 continue
             option = self._answer_question(self.info, mode)
-            if option is None:
-                self.info.topic_code = self.info.exam['topic_code']
-                self.info.skip_count += 1
-                skip_exam(self.info)
-            else:
-                submit(self.info, option)
+            submit(self.info, option)
             self.emit_progress()
             self._pacing_delay(self.info)
 
@@ -350,11 +351,6 @@ class TaskEngine:
                 self.emit_progress()
                 continue
             option = self._answer_question(self.info, mode)
-            if option is None:
-                self.info.topic_code = self.info.exam['topic_code']
-                self.info.skip_count += 1
-                skip_exam(self.info)
-            else:
-                submit(self.info, option)
+            submit(self.info, option)
             self.emit_progress()
             self._pacing_delay(self.info)

@@ -5,6 +5,7 @@ import json
 from urllib.parse import unquote
 
 from api.main_api import query_word, submit_result, next_exam
+from core.outcome import UnanswerableQuestion
 from log.log import Log
 from publicInfo.publicInfo import PublicInfo
 from decryptencrypt.debase64 import debase64
@@ -63,7 +64,7 @@ def _build_phrase_answer(public_info, phrase: str):
     """
     mode 32 汉译英填空: 按题目 options 单词池过滤短语中的固定词(and/of/for/the等),
     按模板空位对齐提交(逗号连接), 服务端按逗号 split 依次填入空位重建比对判分。
-    选项覆盖不了短语或空位数对不上时返回 None(由调用方跳过/猜测), 不提交残缺短语
+    选项覆盖不了短语或空位数对不上时返回 None(由调用方猜测), 不提交残缺短语
     """
     options = [o.get('content') for o in (public_info.exam.get('options') or []) if isinstance(o, dict)]
     if not options:
@@ -201,6 +202,19 @@ def _match_phrase_by_word_zh(public_info, word_mean):
     return None
 
 
+def has_answer(value):
+    """0 是有效选项；空字符串、空映射和布尔值不是答案。"""
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return value >= 0
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, dict):
+        return bool(value) and all(has_answer(v) for v in value.values())
+    return False
+
+
 # submit
 def submit(public_info: PublicInfo, option: int or str or dict):
     """
@@ -209,6 +223,8 @@ def submit(public_info: PublicInfo, option: int or str or dict):
     :param option: 选项索引或单词
     :return: None
     """
+    if not has_answer(option):
+        raise UnanswerableQuestion('题目缺少可提交的答案，已停止当前项；未跳题或提交空答案')
     public_info.topic_code = public_info.exam['topic_code']
     # submit result
     if type(option) == dict:
@@ -229,7 +245,7 @@ def jump_read(public_info):
     跳过阅读卡片
     """
     time.sleep(random.uniform(0.3, 1.0))
-    query_answer.logger.info("跳过阅读单词卡片")
+    query_answer.logger.info("阅读单词卡片，进入下一题（无需作答）")
     next_exam(public_info)
     public_info.topic_code = public_info.exam['topic_code']
 
@@ -675,83 +691,77 @@ def answer(public_info, mode):
 
 
 def guess_answer(public_info, mode):
-    """兼容模式: 答题异常时生成格式合法的猜测答案, 无法生成返回 None"""
+    """按已知题型生成猜测；缺少作答结构或未知题型返回 None，不伪造接口参数。"""
     exam = public_info.exam
     if not isinstance(exam, dict):
         return None
     try:
         options = exam.get('options') or []
+        stem = exam.get('stem') or {}
         contents = [o.get('content') for o in options if isinstance(o, dict)]
         n = len(options)
+        session = getattr(public_info, 'redo_session', None)
+        rejected = session.rejected.get(session.key(exam), set()) if session is not None else set()
         if mode in (11, 15, 16, 17, 18, 21, 22):
-            return random.randrange(n) if n else None
+            indexes = [i for i, o in enumerate(options) if isinstance(o, dict)]
+            fresh = [i for i in indexes if norm_text(options[i].get('content')) not in rejected]
+            return random.choice(fresh or indexes) if indexes else None
         if mode == 13:
             return 3
         if mode == 31:
-            relations = exam.get('stem', {}).get('remark') or []
-            if not n or not isinstance(relations, list) or not relations:
+            relations = stem.get('remark') or []
+            if (not n or not isinstance(relations, list) or not relations
+                    or not all(isinstance(rel, dict) and 'relation' in rel for rel in relations)):
                 return None
             indexes = list(range(n))
             random.shuffle(indexes)
-            return {rel['relation']: indexes[i % n]
-                    for i, rel in enumerate(relations)
-                    if isinstance(rel, dict) and 'relation' in rel}
+            return {rel['relation']: indexes[i % n] for i, rel in enumerate(relations)}
         if mode == 32:
-            _, slot_words = _template_slots(exam.get('stem', {}).get('content', ''))
-            words = [c for c in contents if c]
+            _, slot_words = _template_slots(stem.get('content', ''))
+            words = [c for c in contents if isinstance(c, str) and c.strip()]
             if not words:
                 return None
-            count = slot_words or 1
-            return ','.join(words[i % len(words)] for i in range(count))
+            random.shuffle(words)
+            return ','.join(words[i % len(words)] for i in range(slot_words or 1))
         if mode in (41, 42, 43, 44):
-            if not options:
-                return None
-            option = options[2] if n >= 3 else options[0]
-            return _sentence_option_answer(option, None)
-        if mode in (51, 52, 53, 54):
-            w_lens = exam.get('w_lens') or []
-            w_len = int(w_lens[0]) if w_lens else 0
-            tip = (exam.get('w_tip') or '').lower()
-            words = public_info.word_list or []
-            for w in words:
-                if isinstance(w, str) and w.lower().startswith(tip) and (not w_len or len(w) == w_len):
-                    return w
-            for w in words:
-                if isinstance(w, str) and w_len and len(w) == w_len:
-                    return w
-            if tip:
-                return tip + 'a' * max(0, w_len - len(tip))
-            return None
-        if mode == 73:
-            content = exam.get('stem', {}).get('content', '')
-            tips = re.findall(r'\{(\w+)\}', content)
+            candidates = []
+            for option in options:
+                if not isinstance(option, dict):
+                    continue
+                tag = option.get('answer_tag')
+                if isinstance(tag, str) and option.get('sub_options'):
+                    candidates.extend(tag + str(sub['answer_tag']) for sub in option['sub_options']
+                                      if isinstance(sub, dict) and has_answer(sub.get('answer_tag')))
+                else:
+                    encoded = _sentence_option_answer(option, None)
+                    if has_answer(encoded):
+                        candidates.append(encoded)
+            return random.choice(candidates) if candidates else None
+        if mode in (51, 52, 53, 54, 73):
+            lengths = exam.get('w_lens') or []
+            pool = [w for w in (getattr(public_info, 'word_list', None) or []) if isinstance(w, str) and w.strip()]
+            pool += [w for w in (_global_word_pool(public_info) or []) if isinstance(w, str) and w.strip()]
+            pool += [w for w in contents if isinstance(w, str) and w.strip()]
+            pool = list(dict.fromkeys(pool))
+            def word_guess(tip, index):
+                length = int(lengths[index]) if index < len(lengths) and lengths[index] else 0
+                if length < 0 or length > 256:
+                    raise ValueError('拼写长度异常')
+                matching = [w for w in pool if w.lower().startswith(tip.lower()) and (not length or len(w) == length)]
+                fresh = [w for w in matching if norm_text(w) not in rejected]
+                if fresh or matching:
+                    return random.choice(fresh or matching)
+                # 保留题干前缀，按空位长度猜剩余字母，避免缺少候选词时直接跳过。
+                prefix = tip[:length] if length else tip
+                count = max(0, length - len(prefix)) if length else (0 if prefix else 1)
+                return prefix + ''.join(random.choices('abcdefghijklmnopqrstuvwxyz', k=count))
+            if mode != 73:
+                return word_guess(str(exam.get('w_tip') or '').lower(), 0)
+            # 同时处理有首字母和没有首字母的空位，并保留题干顺序。
+            tips = re.findall(r'\{(\w*)\}', stem.get('content', ''))
             if not tips:
-                slot_count = content.count('{}')
-                pool = [c for c in contents if c]
-                if slot_count and pool:
-                    return json.dumps([pool[i % len(pool)] for i in range(slot_count)])
                 return None
-            w_lens = exam.get('w_lens') or []
-            pool = [w for w in (public_info.word_list or []) if isinstance(w, str)]
-            pool += [w for w in (_global_word_pool(public_info) or []) if isinstance(w, str)]
-            answers = []
-            for i, tip in enumerate(tips):
-                w_len = int(w_lens[i]) if i < len(w_lens) and w_lens[i] else 0
-                matched = None
-                for w in pool:
-                    if w.lower().startswith(tip.lower()) and (not w_len or len(w) == w_len):
-                        matched = w
-                        break
-                if matched is None:
-                    for w in pool:
-                        if w_len and len(w) == w_len:
-                            matched = w
-                            break
-                if matched is None:
-                    matched = tip + 'a' * max(0, w_len - len(tip))
-                answers.append(matched)
-            return json.dumps(answers)
-    except Exception as e:
-        query_answer.logger.error(f"兼容模式猜测答案失败: {e}")
-        return None
+            return json.dumps([word_guess(tip, i) for i, tip in enumerate(tips)])
+    except Exception as error:
+        query_answer.logger.error(f"生成猜测答案失败：{error}")
     return None

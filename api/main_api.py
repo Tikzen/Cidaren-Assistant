@@ -59,8 +59,8 @@ def handle_response(response):
     elif code == 20001 and response_json['data'] or code == 20004:
         pass
     elif code == 0 and response_json['msg'] == '加载单词卡片失败，请重新加载':
-        api.logger.error("查找不到单词(第三方库转原型失败),请手动答题")
-        raise LookupError("查找不到单词,请手动答题")
+        api.logger.error("无法加载单词卡片，交由当前答题策略处理")
+        raise LookupError("无法加载单词卡片")
     else:
         api.logger.error(f"请求有问题{response.text}")
         raise ApiResponseError("请求有问题，中止程序", code, response_json.get('msg'))
@@ -117,36 +117,6 @@ def is_close() -> bool:
         return True
     else:
         return False
-
-
-def skip_exam(public_info):
-    """
-    跳过过不了的题目
-    :return:
-    """
-    api.logger.info("无法完成，跳过题目")
-    url = f'{PublicInfo.task_type}/SkipAnswer'
-    params = {'it_font_size': 42,
-              'it_img_w': 804,
-              'opt_font_c': '#000000',
-              'opt_font_size': 37,
-              'opt_img_w': 684,
-              'time_spent': 20000,
-              'timestamp': create_timestamp(),
-              'topic_code': public_info.topic_code,
-              'version': '2.6.2.24031302'}
-    sign = encrypt_md5("&".join([f'{key}={value}' for key, value in params.items()]) + 'ajfajfamsnfaflfasakljdlalkflak')
-    params.update({'sign': sign})
-    rsp = check_jv_and_retry_post(requests.get_session('rqs2_session').post, basic_url + url, data=json.dumps(params))
-    # check response is success
-    handle_response(rsp)
-    # 检查jv
-    # update exam
-    if rsp.json()['msg'] == '任务已完成！' or rsp.json()['msg'] == '需要选词！':
-        public_info.exam = 'complete'
-    # decrypt response
-    else:
-        public_info.exam = debase64(rsp.json()['data'], rsp.json()['jv'])
 
 
 # 勾选所有单词 bug

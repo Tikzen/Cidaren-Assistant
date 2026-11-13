@@ -213,7 +213,7 @@ class Ui_Form(QWidget):
         self.defaultMusicBtn.setText(_translate("Form", "恢复默认"))
         self.compatCheckBox.setText(_translate("Form", "兼容模式"))
         self.compat_hint.setText(_translate(
-            "Form", "答题出错时猜一个答案继续，避免任务中断；正确率可能略低。"))
+            "Form", "没有确定答案时始终猜答，不自动跳题。开启后，解析异常也尝试猜答；关闭后，解析异常会停止当前项。猜答不保证正确，账号失效和安全验证仍需处理。"))
         self.br_checkBox.setText(_translate("Form", "启用 br 压缩"))
         self.br_hint.setText(_translate("Form", "减少网络流量。个别旧系统不支持，遇到网络异常时可以关闭。"))
         self.confirmBtn.setText(_translate("Form", "确定"))

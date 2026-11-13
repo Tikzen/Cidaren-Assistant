@@ -138,10 +138,11 @@ class WorkerTests(unittest.TestCase):
                 patch.object(main, 'guess_answer', return_value=0):
             self.assertEqual(self.worker._answer_question(SimpleNamespace(compat_mode=True), 17), 0)
 
-    def test_parse_failure_skips_when_disabled(self):
+    def test_parse_failure_stops_instead_of_skipping_when_disabled(self):
         with patch.object(main, 'answer', side_effect=ValueError('bad')), \
                 patch.object(main, 'guess_answer') as guess:
-            self.assertIsNone(self.worker._answer_question(SimpleNamespace(compat_mode=False), 17))
+            with self.assertRaises(ValueError):
+                self.worker._answer_question(SimpleNamespace(compat_mode=False), 17)
             guess.assert_not_called()
 
     def test_network_and_service_failures_propagate(self):

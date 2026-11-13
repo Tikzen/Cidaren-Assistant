@@ -344,7 +344,7 @@ class RedoSession:
 
 def redo_task(worker, info, task, notify):
     from api.basic_api import get_all_unit, get_unit_words
-    from api.main_api import get_exam, select_all_word, skip_exam
+    from api.main_api import get_exam, select_all_word
     from answer_questions.answer_questions import submit, jump_read
     from decryptencrypt.debase64 import debase64
     from util.handle_word_list import handle_word_result
@@ -424,11 +424,7 @@ def redo_task(worker, info, task, notify):
                     jump_read(info)
                 else:
                     option = worker._answer_question(info, mode)
-                    if option is None:
-                        info.skip_count += 1
-                        skip_exam(info)
-                    else:
-                        submit(info, option)
+                    submit(info, option)
                     worker._pacing_delay(info)
                 worker.emit_progress()
             if not worker._is_running:

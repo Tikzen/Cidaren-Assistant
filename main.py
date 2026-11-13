@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import QApplication
 
 from answer_questions.answer_questions import *
 from api.basic_api import get_all_unit, get_unit_words, get_book_all_words
-from api.main_api import get_exam, select_all_word, skip_exam, get_task_score, SecurityVerifyError, ApiResponseError
+from api.main_api import get_exam, select_all_word, get_task_score, SecurityVerifyError, ApiResponseError
 from log.log import Log
 from publicInfo.publicInfo import PublicInfo
 from util.basic_util import extract_book_word, query_word_unit

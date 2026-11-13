@@ -337,7 +337,7 @@ def make_pages():
     form.tabWidget.setCurrentIndex(1)
     settle(form)
     render('09-other-preferences.png', form, '09  兼容模式、提示音和网络', '本页注明重启生效的设置，保存后重启程序。', [
-        mark(rect_of(form, form.compatCheckBox), '兼容模式', '部分数据或解析异常时猜一个答案继续，优先减少中断。'),
+        mark(rect_of(form, form.compatCheckBox), '兼容模式', '缺少答案时始终猜答；此开关控制解析异常时是否也猜答。'),
         mark(rect_of(form, form.br_checkBox), 'br 压缩', '通常保持默认；遇到相关兼容问题时再调整。'),
         mark(rect_of(form, form.playMusicCheckBox), '完成提示音', '可以开关提示音，也可以选择自己的 .wav 文件。'),
     ])
