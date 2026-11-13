@@ -219,6 +219,7 @@ try {
 } catch {
   $success = $false
   $message = $_.Exception.Message
+  Write-Output ($_ | Format-List * -Force | Out-String)
   for ($i=$changed.Count-1;$i -ge 0;$i--) {
     $item=$changed[$i]
     if (Test-Path -LiteralPath $item.backup) { InstallFile $item.backup $item.target }

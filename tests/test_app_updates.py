@@ -226,7 +226,9 @@ class UpdatesTests(unittest.TestCase):
             deadline = time.monotonic()+10
             while not marker.exists() and time.monotonic() < deadline: time.sleep(.05)
             self.assertTrue(marker.exists(), (path.parent/'apply.log').read_text())
-            self.assertFalse(json.loads((self.root/'.update-result.json').read_text(encoding='utf-8-sig'))['success'])
+            result = json.loads((self.root/'.update-result.json').read_text(encoding='utf-8-sig'))
+            self.assertFalse(result['success'])
+            self.assertIn('b.dll', result['message'], str(result) + '\n' + (path.parent/'apply.log').read_text(errors='replace'))
             self.assertEqual((self.root/'a.exe').read_text(), 'old a')
             self.assertEqual(locked.read_text(), 'old b')
         finally:
@@ -246,8 +248,9 @@ class UpdatesTests(unittest.TestCase):
         deadline = time.monotonic()+10
         while not marker.exists() and time.monotonic() < deadline: time.sleep(.05)
         self.assertTrue(marker.exists(), (path.parent/'apply.log').read_text())
+        result = json.loads((self.root/'.update-result.json').read_text(encoding='utf-8-sig'))
+        self.assertTrue(result['success'], str(result) + '\n' + (path.parent/'apply.log').read_text(errors='replace'))
         self.assertEqual((self.root/'main.exe').read_text(), 'new')
-        self.assertTrue(json.loads((self.root/'.update-result.json').read_text(encoding='utf-8-sig'))['success'])
 
 
 if __name__ == '__main__': unittest.main()
