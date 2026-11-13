@@ -12,6 +12,7 @@ from util.answer_lib import add_answer, add_word_answer
 from util.basic_util import create_timestamp, resolve_word_ci
 from util.wrong_memory import record as record_wrong_answer
 from util.word_cache import lookup as lookup_cached_word, save as save_cached_word
+from core.task_identity import valid_id
 
 # create logger
 api = Log('main_api')
@@ -150,6 +151,8 @@ def skip_exam(public_info):
 
 # 勾选所有单词 bug
 def select_all_word(word_info, task_id: int, ) -> None:
+    if not valid_id(task_id):
+        raise ApiResponseError('尚未取得有效任务 ID，未提交选词，请刷新任务后重试')
     api.logger.info("勾选全部单词并提交")
     timestamp = create_timestamp()
     url = f'{PublicInfo.task_type}/SubmitChoseWord'

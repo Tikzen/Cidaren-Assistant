@@ -12,6 +12,7 @@ import tempfile
 import threading
 import time
 import uuid
+from core.task_identity import task_key, valid_id
 
 
 class State(str, Enum):
@@ -60,7 +61,7 @@ class Job:
 
     @property
     def identity(self):
-        return (self.account, str(self.task.get('release_id')), str(self.task['task_id']), self.task['task_type'], self.goal)
+        return (self.account, *task_key(self.task), self.goal)
 
 
 class TaskQueue:
@@ -78,14 +79,19 @@ class TaskQueue:
             raise ValueError('未知的任务目标')
         added = 0
         with self._edit():
-            known = {j.identity for j in self._jobs if j.state not in TERMINAL}
+            known = {j.identity: j for j in self._jobs if j.state not in TERMINAL}
             for task in tasks:
                 fields = ('task_id', 'release_id', 'course_id', 'task_name', 'task_type', 'progress', 'score', 'over_status')
                 job = Job({key: deepcopy(task[key]) for key in fields if key in task}, goal, account)
                 if job.identity not in known:
                     self._jobs.append(job)
-                    known.add(job.identity)
+                    known[job.identity] = job
                     added += 1
+                elif known[job.identity].state == State.WAITING:
+                    existing = known[job.identity]
+                    if valid_id(existing.task.get('task_id')) and not valid_id(job.task.get('task_id')):
+                        job.task['task_id'] = existing.task['task_id']
+                    existing.task.update(job.task)
             self._save()
         return added
 

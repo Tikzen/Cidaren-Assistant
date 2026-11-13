@@ -57,6 +57,7 @@ class TaskEngine:
 
     def execute_mode(self, task, mode):
         self.current_task_name = task['task_name']
+        self.info.task_kind = task['task_type']
         self.info.right_count = self.info.wrong_count = self.info.skip_count = 0
         self.info.redo_report = None
         if mode in ('redo', 'full') and task['task_type'] != 1:
@@ -152,6 +153,7 @@ class TaskEngine:
         return True
 
     def complete_test(self, task_info: dict):
+        self.info.task_kind = task_info['task_type']
         task_name = task_info['task_name']
         self.info.course_id = task_info['course_id']
         self.logger.info(f'开始执行任务：{task_name}')

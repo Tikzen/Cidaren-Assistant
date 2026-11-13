@@ -66,7 +66,8 @@ def extract_book_word(public_info):
 
 # 在单元中查找单词
 def query_word_unit(public_info):
-    public_info.get_word_list_result = debase64(public_info.get_word_list_result['data'], public_info.get_word_list_result['jv'])
+    raw = public_info.get_word_list_result
+    public_info.get_word_list_result = raw['data'] if isinstance(raw['data'], dict) else debase64(raw['data'], raw['jv'])
     all_unit = {}
     # 创建所有单元字典
     for unit in public_info.all_unit_name:

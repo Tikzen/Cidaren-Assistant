@@ -12,6 +12,7 @@ from core.control import RunControl
 from core.engine import TaskEngine
 from core.outcome import JobSkipped, PartialCompletion
 from core.queue import State
+from core.task_identity import refreshed_task, valid_id
 from core.runtime import account_lock
 from util.file_lock import LockBusy
 
@@ -78,18 +79,27 @@ class QueueWorker(QThread):
                     info = deepcopy(self.template)
                     task = job.task
                     self.changed.emit()
+                    def sync_id():
+                        current = getattr(info, 'task_id', None)
+                        if (valid_id(current) and str(getattr(info, 'release_id', None)) == str(task.get('release_id'))
+                                and str(current) != str(task.get('task_id'))):
+                            task['task_id'] = int(current)
+                            self.queue.update(job.id, task=task)
                     def progress(message):
+                        sync_id()
                         self.queue.update(job.id, progress=message)
                         self.changed.emit()
                     def notice(message):
+                        sync_id()
                         self.queue.update(job.id, message=message)
                         self.notice.emit(f'{task["task_name"]}：{message}')
                         self.changed.emit()
                     try:
                         # 前一项可能刚完成同一任务；启动前刷新，满分模式不重复从头刷。
                         fresh = fetch_tasks(deepcopy(self.template)) if self.refresh else []
-                        by_id = {(str(t['task_id']), str(t['release_id'])): t for t in fresh}
-                        task = by_id.get((str(job.task['task_id']), str(job.task.get('release_id'))), job.task)
+                        task = refreshed_task(job.task, fresh) if self.refresh else job.task
+                        if task is None:
+                            raise JobSkipped('任务已不在当前可执行列表中，请刷新后确认是否过期或已移除')
                         self.queue.update(job.id, task=task)
                         self.changed.emit()
                         from util.answer_lib import load_lib
@@ -124,6 +134,7 @@ class QueueWorker(QThread):
                             self.problem.emit('登录已失效，请重新登录。队列里的任务都还在')
                             break
                     finally:
+                        sync_id()
                         self.active_id = None
                         self.control.started = time.monotonic()
                         self.control.paused_seconds = 0

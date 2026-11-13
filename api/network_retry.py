@@ -92,8 +92,8 @@ def _read_only(method, url):
     parsed = urlsplit(url)
     path = parsed.path.rstrip('/')
     if method in ('GET', 'HEAD', 'OPTIONS'):
-        # StartAnswer 虽使用 GET, 仍可能改变任务状态。
-        return not path.endswith('/StartAnswer')
+        # 班级详情也会初始化 -1 任务；响应中断时不能盲目重放。
+        return not path.endswith(('/StartAnswer', '/ClassTask/Info'))
     return (method == 'POST' and parsed.hostname == 'app.vocabgo.com'
             and path == '/student/api/Student/ClassTask/PageTask')
 

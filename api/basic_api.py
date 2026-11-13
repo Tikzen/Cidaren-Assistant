@@ -4,6 +4,8 @@ import api.request_header as requests
 from api.main_api import SecurityVerifyError, ApiResponseError
 from log.log import Log, get_file_logger
 from util.basic_util import create_timestamp
+from decryptencrypt.debase64 import debase64
+from core.task_identity import valid_id
 
 # init log
 basic_api = Log("basic_api")
@@ -73,6 +75,27 @@ def get_all_unit(public_info):
 # 获取单元所有单词
 def get_unit_words(public_info):
     timestamp = create_timestamp()
+    is_class_learning = (bool(getattr(public_info, 'release_id', None))
+                         and getattr(public_info, 'task_kind', 1) == 1)
+    if is_class_learning:
+        # 官方班级学习页首先读取 ClassTask/Info；它会初始化尚为 -1 的任务。
+        # StudyTask/Info 的课程自学 ID 不能用于 ClassTask/SubmitChoseWord。
+        params = {'task_id': public_info.task_id if valid_id(public_info.task_id) else -1,
+                  'release_id': public_info.release_id, 'timestamp': timestamp,
+                  'version': '2.6.1.240305', 'app_type': '1'}
+        response = requests.get_session('class_task_request').get(basic_url + 'ClassTask/Info', params=params)
+        handle_response(response)
+        payload = response.json()
+        data = payload['data'] if isinstance(payload.get('data'), dict) else debase64(payload['data'], payload['jv'])
+        if not isinstance(data, dict) or not valid_id(data.get('task_id')):
+            raise ApiResponseError('平台未返回有效班级任务 ID，已停止当前项，未提交选词')
+        if data.get('course_id') is not None and str(data['course_id']) != str(public_info.course_id):
+            raise ApiResponseError('班级任务课程与所选任务不一致，未提交选词')
+        if data.get('release_id') is not None and str(data['release_id']) != str(public_info.release_id):
+            raise ApiResponseError('班级任务发布编号与所选任务不一致，未提交选词')
+        public_info.task_id = int(data['task_id'])
+        public_info.get_word_list_result = {**payload, 'data': data}
+        return
     url_params = {'task_id': public_info.task_id or -1, "course_id": public_info.course_id, 'timestamp': timestamp,
                   'version': '2.6.1.240305', 'app_type': '1'}
     if public_info.is_self_built:

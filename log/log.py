@@ -13,9 +13,15 @@ os.makedirs(log_dir, exist_ok=True)
 
 # 清理旧的日志文件，只保留最近的200个
 def clean_old_logs():
-    log_files = glob.glob(os.path.join(log_dir, "app_*.log"))
-    log_files.sort(key=os.path.getmtime, reverse=True)
-    for old_file in log_files[200:]:
+    log_files = []
+    for path in glob.glob(os.path.join(log_dir, "app_*.log")):
+        try:
+            log_files.append((os.path.getmtime(path), path))
+        except OSError:
+            # 另一个窗口可能刚清理了同一日志。
+            continue
+    log_files.sort(reverse=True)
+    for _, old_file in log_files[200:]:
         try:
             os.remove(old_file)
         except OSError:

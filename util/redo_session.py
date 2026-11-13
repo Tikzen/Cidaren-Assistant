@@ -350,6 +350,7 @@ def redo_task(worker, info, task, notify):
     from util.handle_word_list import handle_word_result
 
     info.redo_report = None
+    info.task_kind = task.get('task_type')
     if task.get('task_type') != 1:
         raise RedoStopped('重做提分仅支持班级学习任务')
     info.course_id, info.release_id, info.task_id = task['course_id'], task['release_id'], task['task_id']

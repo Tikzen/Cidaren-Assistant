@@ -12,6 +12,7 @@ import app_info
 from core.account import connect_account
 from core.queue import TaskQueue, State, ACTIVE, TERMINAL, account_key
 from core.runtime import account_running, queue_path, account_lock
+from core.task_identity import task_key
 from util.file_lock import LockBusy
 from desktop.workers import CallWorker, QueueWorker
 from desktop import theme
@@ -928,11 +929,12 @@ class AssistantWindow(QMainWindow):
         self.update_controls()
 
     def queue_finished(self):
-        updates = {(str(j.task['task_id']), str(j.task.get('release_id'))): j for j in self.queue.snapshot(self.account)
+        updates = {task_key(j.task): j for j in self.queue.snapshot(self.account)
                    if j.state == State.SUCCEEDED}
         for task in self.tasks:
-            job = updates.get((str(task['task_id']), str(task.get('release_id'))))
+            job = updates.get(task_key(task))
             if job:
+                task['task_id'] = job.task['task_id']
                 task['progress'] = 100
                 if job.report and job.report.get('score') is not None:
                     task['score'] = job.report['score']
