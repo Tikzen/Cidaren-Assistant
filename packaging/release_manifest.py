@@ -7,6 +7,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from core.app_updates import digest, protected
+from app_info import VERSION
 
 
 def generate(root, archive, revision):
@@ -16,7 +17,7 @@ def generate(root, archive, revision):
         name = path.relative_to(root).as_posix()
         if protected(name): continue
         files.append(dict(path=name, size=path.stat().st_size, sha256=digest(path)))
-    manifest = dict(schema=1, platform='windows-x64', revision=revision,
+    manifest = dict(schema=1, platform='windows-x64', version=VERSION, revision=revision,
                     archive=archive.name, archive_sha256=digest(archive), prefix=root.name, files=files)
     result = archive.parent/'update-manifest-windows-x64.json'
     result.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')

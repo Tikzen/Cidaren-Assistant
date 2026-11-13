@@ -4,7 +4,9 @@ import shutil
 import threading
 
 from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
-from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QTextBrowser, QProgressBar, QPushButton, QHBoxLayout
+from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QTextBrowser, QProgressBar, QPushButton, QHBoxLayout, QGridLayout, QSizePolicy
+
+import app_info
 
 from core.app_updates import UpdateClient
 from core.instances import active_instances
@@ -38,15 +40,41 @@ class UpdateDialog(QDialog):
         self._closing = False
         self.setWindowTitle('检查更新')
         self.setWindowModality(Qt.WindowModality.ApplicationModal)
-        self.resize(580, 400)
+        self.resize(640, 480)
+        self.setMinimumSize(560, 430)
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(12)
+        versions = QGridLayout()
+        versions.setHorizontalSpacing(16)
+        self.current_version = QLabel(app_info.VERSION)
+        self.latest_version = QLabel('正在检查…')
+        for row, (label, value) in enumerate((('当前文件版本', self.current_version), ('最新文件版本', self.latest_version))):
+            versions.addWidget(QLabel(label), row, 0)
+            value.setTextFormat(Qt.TextFormat.PlainText)
+            value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            versions.addWidget(value, row, 1)
+        versions.setColumnStretch(1, 1)
+        layout.addLayout(versions)
         self.status = QLabel('正在检查更新…')
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
         self.notes = QTextBrowser()
-        layout.addWidget(self.notes)
+        self.notes.setMinimumHeight(90)
+        layout.addWidget(self.notes, 1)
+        progress_area = QVBoxLayout()
+        progress_area.setSpacing(6)
+        self.progress_text = QLabel('正在检查…')
+        self.progress_text.setAlignment(Qt.AlignmentFlag.AlignRight)
+        progress_area.addWidget(self.progress_text)
         self.progress = QProgressBar()
-        layout.addWidget(self.progress)
+        self.progress.setObjectName('updateProgress')
+        self.progress.setTextVisible(False)
+        self.progress.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        # 覆盖主窗口用于队列的 6px 样式；文字在独立行显示，避免被裁剪。
+        self.progress.setStyleSheet('QProgressBar#updateProgress { min-height: 12px; max-height: 12px; border-radius: 6px; }')
+        progress_area.addWidget(self.progress)
+        layout.addLayout(progress_area)
         hint = QLabel('保留配置、Token、词库、缓存及队列记录。\n更新前请结束任务并关闭其他多开窗口。更新后自动重新启动。')
         hint.setWordWrap(True)
         layout.addWidget(hint)
@@ -91,6 +119,7 @@ class UpdateDialog(QDialog):
     def start_check(self):
         if self.busy(): return
         self.plan = None
+        self.latest_version.setText('正在检查…')
         self.notes.clear()
         self.start_worker(None)
 
@@ -113,19 +142,25 @@ class UpdateDialog(QDialog):
 
     def on_progress(self, message, value):
         self.status.setText(message)
+        self.progress_text.setText('处理中…' if value < 0 else f'{value}%')
         self.progress.setRange(0, 0 if value < 0 else 100)
         if value >= 0: self.progress.setValue(value)
 
     def on_error(self, message):
         self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        self.progress_text.setText('未完成')
+        if self.plan is None:
+            self.latest_version.setText('未能获取')
         self.status.setText('更新未应用：' + message)
 
     def checked(self, plan):
         if self._closing: return
         self.plan = plan
+        self.latest_version.setText(plan.version.removeprefix('v'))
         size = sum(row['size'] for row in plan.files)
-        self.status.setText(f'{plan.version}：发现 {len(plan.files)} 个差异文件（{size / 1024 / 1024:.1f} MB）'
-                            if plan.files else f'{plan.version}：程序文件已是最新')
+        self.status.setText(f'发现 {len(plan.files)} 个差异文件（{size / 1024 / 1024:.1f} MB）'
+                            if plan.files else '程序文件已是最新')
         text = plan.notes
         if plan.kind == 'windows' and plan.files:
             text += '\n\nWindows 将下载完整安装包，校验后只替换差异文件。'
@@ -134,6 +169,7 @@ class UpdateDialog(QDialog):
         self.notes.setPlainText(text)
         self.progress.setRange(0, 100)
         self.progress.setValue(100)
+        self.progress_text.setText('检查完成')
 
     def prepared(self, plan_file):
         if self._closing:

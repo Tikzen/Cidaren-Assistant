@@ -5,6 +5,9 @@ import tempfile
 import unittest
 from unittest.mock import patch
 from PyQt6.QtWidgets import QApplication, QWidget
+from PyQt6.QtGui import QFont
+import app_info
+from desktop import theme
 from core.app_updates import UpdatePlan
 from desktop.update_dialog import UpdateDialog
 
@@ -36,6 +39,32 @@ class UpdateUiTests(unittest.TestCase):
         self.assertIn('1 个差异文件', self.dialog.status.text())
         self.assertIn('完整安装包', self.dialog.notes.toPlainText())
         self.assertTrue(self.dialog.apply.isEnabled())
+
+    def test_current_and_remote_versions_stay_visible_during_progress(self):
+        self.plan.version = 'v1.0.0'
+        self.dialog.checked(self.plan)
+        self.dialog.on_progress('正在下载…', 38)
+        self.assertEqual(self.dialog.current_version.text(), app_info.VERSION)
+        self.assertEqual(self.dialog.latest_version.text(), '1.0.0')
+        self.assertEqual(self.dialog.progress_text.text(), '38%')
+        self.assertFalse(self.dialog.progress.isTextVisible())
+        self.dialog.on_progress('正在检查…', -1)
+        self.assertEqual(self.dialog.progress_text.text(), '处理中…')
+
+    def test_inherited_queue_style_does_not_clip_update_progress(self):
+        self.window.setStyleSheet(theme.stylesheet(theme.tokens(self.app.palette()), 13))
+        for size in (10, 16):
+            with self.subTest(size=size):
+                self.dialog.setFont(QFont(self.app.font().family(), size))
+                self.dialog.resize(560, 430)
+                self.dialog.on_progress('正在下载并校验文件…', 38)
+                self.dialog.show()
+                self.app.processEvents()
+                self.assertGreaterEqual(self.dialog.progress.height(), 12)
+                self.assertGreaterEqual(self.dialog.progress_text.height(), self.dialog.progress_text.fontMetrics().height())
+                self.assertLess(self.dialog.notes.geometry().bottom(), self.dialog.progress_text.geometry().top())
+                self.assertLess(self.dialog.progress_text.geometry().bottom(), self.dialog.progress.geometry().top())
+                self.assertLess(self.dialog.progress.geometry().bottom(), self.dialog.dismiss.geometry().top())
 
     def test_active_tasks_and_other_windows_block_applying_only(self):
         self.dialog.checked(self.plan)

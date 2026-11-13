@@ -1,5 +1,6 @@
 """从本项目 GitHub 获取更新，校验后暂存；应用更新由退出后的独立进程执行。"""
 from dataclasses import dataclass, field
+import ast
 import hashlib
 import json
 import os
@@ -115,7 +116,8 @@ class UpdateClient:
         tree = self.json(self.api + f'/git/trees/{revision}?recursive=1')
         if tree.get('truncated'):
             raise RuntimeError('更新文件列表不完整，未准备更新')
-        plan = UpdatePlan(str(self.root), '源码 ' + revision[:7], revision, 'source', notes=commit.get('commit', {}).get('message', ''))
+        version = self._source_version(revision, tree['tree'])
+        plan = UpdatePlan(str(self.root), version, revision, 'source', notes=commit.get('commit', {}).get('message', ''))
         for item in tree['tree']:
             if item['type'] != 'blob':
                 continue
@@ -126,6 +128,26 @@ class UpdateClient:
                 raise ValueError(f'不支持的更新文件类型：{name}')
             self._include(plan, name, item['sha'], item['size'], int(item['mode'][-3:], 8), git_blob=True)
         return plan
+
+    def _source_version(self, revision, tree):
+        item = next((row for row in tree if row.get('path') == 'app_info.py' and row.get('type') == 'blob'), None)
+        if item is None:
+            raise ValueError('远端源码缺少版本信息')
+        self.checkpoint()
+        response = self.session.get(f'https://raw.githubusercontent.com/{app_info.REPOSITORY}/{revision}/app_info.py')
+        try:
+            response.raise_for_status()
+            data = response.content
+        finally:
+            response.close()
+        if len(data) > 64 * 1024 or hashlib.sha1(f'blob {len(data)}\0'.encode() + data).hexdigest() != item['sha']:
+            raise ValueError('远端版本文件校验失败')
+        # 只读取固定提交中的常量，不执行远端 Python 文件。
+        for node in ast.parse(data.decode('utf-8-sig')).body:
+            if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'VERSION' for t in node.targets):
+                if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str) and node.value.value.strip():
+                    return node.value.value.strip()
+        raise ValueError('远端源码未声明有效版本号')
 
     def _windows_plan(self):
         releases = self.json(self.api + '/releases?per_page=20')
@@ -142,7 +164,7 @@ class UpdateClient:
             archive = assets.get(manifest['archive'])
             if archive is None:
                 raise ValueError('发布版本缺少安装压缩包')
-            plan = UpdatePlan(str(self.root), release['tag_name'], str(manifest['revision']), 'windows',
+            plan = UpdatePlan(str(self.root), manifest.get('version') or release['tag_name'], str(manifest['revision']), 'windows',
                               notes=release.get('body') or '', archive_url=archive['browser_download_url'],
                               archive_sha256=manifest['archive_sha256'], archive_prefix=manifest.get('prefix', ''))
             if plan.archive_prefix:

@@ -5,7 +5,7 @@ on:
       release_tag:
         description: Release tag
         required: true
-        default: v0.1.1-windows-preview.1
+        default: v1.0.0
 permissions:
   contents: write
 jobs:
@@ -61,6 +61,6 @@ jobs:
           dist/CidarenAssistant-Windows-x64.zip
           dist/update-manifest-windows-x64.json
           dist/SHA256SUMS.txt
-          --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --prerelease
+          --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --latest
           --title "词达人小助手 Windows $env:RELEASE_TAG"
           --notes-file docs/windows-release-notes.md

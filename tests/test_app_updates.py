@@ -42,7 +42,8 @@ class UpdatesTests(unittest.TestCase):
         for name, data in files.items():
             h = hashlib.sha1(f'blob {len(data)}\0'.encode() + data).hexdigest()
             tree.append({'type': 'blob', 'path': name, 'mode': '100644', 'sha': h, 'size': len(data)})
-        with patch.object(self.client, 'json', side_effect=[{'sha': revision}, {'tree': tree}]):
+        with patch.object(self.client, 'json', side_effect=[{'sha': revision}, {'tree': tree}]), \
+                patch.object(self.client, '_source_version', return_value='1.0.0'):
             return self.client.check()
 
     def test_source_compares_contents_and_preserves_local_data(self):
@@ -71,6 +72,33 @@ class UpdatesTests(unittest.TestCase):
                 self.client.prepare(plan)
         self.assertEqual((self.root/'main.py').read_text(), 'old')
         self.assertEqual(list((self.base/'state/updates').iterdir()), [])
+
+    def test_source_reads_version_from_pinned_file_without_executing_it(self):
+        from unittest.mock import Mock
+        data = b"VERSION = '1.0.0'\nraise RuntimeError('must not execute')\n"
+        sha = hashlib.sha1(f'blob {len(data)}\0'.encode() + data).hexdigest()
+        response = Mock(content=data)
+        with patch.object(self.client.session, 'get', return_value=response) as get:
+            self.assertEqual(self.client._source_version('a'*40, [dict(type='blob', path='app_info.py', sha=sha)]), '1.0.0')
+        self.assertIn('/'+'a'*40+'/app_info.py', get.call_args.args[0])
+        response.close.assert_called_once()
+
+    def test_source_refuses_version_file_mismatching_pinned_tree(self):
+        from unittest.mock import Mock
+        with patch.object(self.client.session, 'get', return_value=Mock(content=b"VERSION = '9.9.9'")):
+            with self.assertRaisesRegex(ValueError, '校验失败'):
+                self.client._source_version('a'*40, [dict(type='blob', path='app_info.py', sha='0'*40)])
+
+    def test_windows_manifest_displays_file_version_separately_from_release_tag(self):
+        manifest = dict(schema=1, platform='windows-x64', version='1.0.0', archive='app.zip',
+                        archive_sha256='0'*64, revision='b'*40, files=[])
+        release = dict(tag_name='v1.0.0', assets=[dict(name='update-manifest-windows-x64.json', browser_download_url='manifest'),
+                                               dict(name='app.zip', browser_download_url='archive')])
+        with patch.object(self.client, 'json', side_effect=[[release], manifest]):
+            self.assertEqual(self.client._windows_plan().version, '1.0.0')
+        manifest.pop('version')
+        with patch.object(self.client, 'json', side_effect=[[release], manifest]):
+            self.assertEqual(self.client._windows_plan().version, 'v1.0.0')
 
     def test_truncated_tree_rejected(self):
         with patch.object(self.client, 'json', side_effect=[{'sha': 'a'*40}, {'truncated': True}]):

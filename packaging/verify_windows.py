@@ -1,9 +1,12 @@
 """Exercise the actual frozen binaries without credentials or proxy changes."""
 import json
+import sys
 import os
 from pathlib import Path
 import subprocess
 import tempfile
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from app_info import VERSION
 
 root = Path('dist/CidarenAssistant-Windows-x64').resolve()
 report = Path('build/windows-app-selftest.json').resolve()
@@ -13,6 +16,26 @@ process = subprocess.run([str(root / 'CidarenAssistant.exe'), '--build-selftest'
 assert process.returncode == 0, report.read_text() if report.exists() else process.returncode
 result = json.loads(report.read_text())
 assert result['window_created'] and result['model_loaded'] and result['frozen'], result
+assert result['version'] == VERSION and result['update_versions'] == [VERSION, VERSION], result
+assert result['update_progress_height'] >= 12 and result['update_progress_text'] == '38%', result
+# Windows 属性中的文件版本也必须与软件实际版本一致。
+import ctypes
+from ctypes import wintypes
+class FixedInfo(ctypes.Structure):
+    _fields_ = [(name, wintypes.DWORD) for name in ('signature', 'struct_version', 'file_ms', 'file_ls',
+                'product_ms', 'product_ls', 'mask', 'flags', 'os', 'type', 'subtype', 'date_ms', 'date_ls')]
+api = ctypes.WinDLL('version', use_last_error=True)
+api.GetFileVersionInfoSizeW.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(wintypes.DWORD)]
+size = api.GetFileVersionInfoSizeW(str(root / 'CidarenAssistant.exe'), None)
+assert size > 0, 'EXE 缺少版本资源'
+buffer = ctypes.create_string_buffer(size)
+api.GetFileVersionInfoW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p]
+assert api.GetFileVersionInfoW(str(root / 'CidarenAssistant.exe'), 0, size, buffer)
+value, length = ctypes.c_void_p(), wintypes.UINT()
+api.VerQueryValueW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR, ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(wintypes.UINT)]
+assert api.VerQueryValueW(buffer, '\\', ctypes.byref(value), ctypes.byref(length))
+fixed = ctypes.cast(value, ctypes.POINTER(FixedInfo)).contents
+assert (fixed.file_ms >> 16, fixed.file_ms & 65535, fixed.file_ls >> 16, fixed.file_ls & 65535) == tuple(map(int, VERSION.split('.'))) + (0,)
 helper = subprocess.run([str(root / 'mitmdump.exe'), '--version'], cwd=tempfile.gettempdir(),
                         capture_output=True, text=True, timeout=90)
 print(helper.stdout)
@@ -32,4 +55,4 @@ for p in (root / 'log/logs').glob('*.log'):
     p.unlink()
 print('Frozen GUI, local model, independent launch and bundled capture helper passed.')
 
-(root / '使用说明.txt').write_text('解压整个文件夹后，双击 CidarenAssistant.exe 启动。无需安装 Python。请保持依赖文件和文件夹完整；mitmdump.exe 是内置获取 Token 使用的组件，不必单独运行。\n本构建为 Windows x64 便携测试版，未进行代码签名。\n',encoding='utf-8')
+(root / '使用说明.txt').write_text('解压整个文件夹后，双击 CidarenAssistant.exe 启动。无需安装 Python。请保持依赖文件和文件夹完整；mitmdump.exe 是内置获取 Token 使用的组件，不必单独运行。\n本构建为 Windows x64 便携版，未进行代码签名。\n',encoding='utf-8')
