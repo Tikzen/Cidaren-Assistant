@@ -238,7 +238,8 @@ class UpdatesTests(unittest.TestCase):
     def test_windows_powershell_helper_replaces_then_relaunches(self):
         marker = self.base/'restarted marker.txt'
         # 使用外部 Python 解释器，不占用待替换目录；路径带空格。
-        plan = self.transaction({'main.exe': b'new'})
+        self.file('main.exe', 'old')
+        plan = self.transaction({'main.exe': b'new', 'new.dll': b'new dll'})
         plan['command'] = [sys.executable, '-c', f'from pathlib import Path; Path({str(marker)!r}).write_text("ok")']
         path = self.base/'stage/plan.json'
         path.write_text(json.dumps(plan))
@@ -251,6 +252,7 @@ class UpdatesTests(unittest.TestCase):
         result = json.loads((self.root/'.update-result.json').read_text(encoding='utf-8-sig'))
         self.assertTrue(result['success'], str(result) + '\n' + (path.parent/'apply.log').read_text(errors='replace'))
         self.assertEqual((self.root/'main.exe').read_text(), 'new')
+        self.assertEqual((self.root/'new.dll').read_text(), 'new dll')
 
 
 if __name__ == '__main__': unittest.main()

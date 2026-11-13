@@ -172,6 +172,14 @@ function SafePath($base, $name) {
   }
   return $target
 }
+function FileHash($path) {
+  $sha = [Security.Cryptography.SHA256]::Create()
+  $stream = $null
+  try {
+    $stream = [IO.File]::OpenRead($path)
+    return ([BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-','').ToLowerInvariant()
+  } finally { if ($stream) { $stream.Dispose() }; $sha.Dispose() }
+}
 function InstallFile($source,$target) {
   [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target)) | Out-Null
   $temp = $target+'.update-'+[guid]::NewGuid().ToString('N')
@@ -200,7 +208,7 @@ try {
     if ($seen.ContainsKey($f.path)) { throw 'Duplicate update path' }; $seen[$f.path] = $true
     $src = SafePath (Join-Path $stage 'files') $f.path
     $dst = SafePath $root $f.path
-    if ((Get-FileHash -LiteralPath $src -Algorithm SHA256).Hash.ToLowerInvariant() -ne $f.sha256) { throw 'Staged file checksum mismatch' }
+    if ((FileHash $src) -ne $f.sha256) { throw 'Staged file checksum mismatch' }
     $bak = SafePath (Join-Path $stage 'backup') $f.path
     if (Test-Path -LiteralPath $dst) {
       [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($bak)) | Out-Null
@@ -211,7 +219,7 @@ try {
     $src = SafePath (Join-Path $stage 'files') $f.path
     $dst = SafePath $root $f.path
     $bak = SafePath (Join-Path $stage 'backup') $f.path
-    InstallFile $src $dst
+    try { InstallFile $src $dst } catch { throw ('Cannot replace '+$f.path+': '+$_.Exception.Message) }
     $changed.Add(@{target=$dst;backup=$bak})
   }
   $success = $true; $message = '更新完成'
@@ -240,7 +248,10 @@ def launch_windows_helper(plan_file, log):
     import base64
     env = os.environ.copy()
     env['CIDAREN_UPDATE_PLAN'] = str(plan_file)
-    command = ['powershell.exe', '-NoProfile', '-NonInteractive', '-EncodedCommand',
+    system_ps = Path(env.get('SystemRoot', r'C:\Windows')) / 'System32/WindowsPowerShell/v1.0'
+    # 从 pwsh/开发终端启动时，不能继承 PS7 的模块目录给系统 PowerShell 5。
+    env['PSModulePath'] = str(system_ps / 'Modules')
+    command = [str(system_ps / 'powershell.exe'), '-NoProfile', '-NonInteractive', '-EncodedCommand',
                base64.b64encode(WINDOWS_HELPER.encode('utf-16le')).decode()]
     return subprocess.Popen(command, env=env, stdout=log, stderr=log,
                             creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP)
