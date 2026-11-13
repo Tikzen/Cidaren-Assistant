@@ -270,9 +270,10 @@ class QueryAndConfigTests(unittest.TestCase):
         expected = os.path.join(app_path.app_root(), 'config', 'answer_lib.json')
         with patch.object(os, 'getcwd', return_value='/unrelated'):
             self.assertEqual(answer_lib._lib_path(), expected)
-        with patch.object(sys, 'frozen', True, create=True), \
-                patch.object(sys, 'executable', '/application/Easy_Cidaren.exe'):
-            self.assertEqual(app_path.app_root(), '/application')
+        with tempfile.TemporaryDirectory() as folder, \
+                patch.object(sys, 'frozen', True, create=True), \
+                patch.object(sys, 'executable', os.path.join(folder, 'Easy_Cidaren.exe')):
+            self.assertEqual(app_path.app_root(), folder)
 
 
 if __name__ == '__main__':

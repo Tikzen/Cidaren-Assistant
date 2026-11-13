@@ -1,5 +1,5 @@
 NAME = '词达人小助手'
-VERSION = '0.1.0-dev'
+VERSION = '0.1.1'
 REPOSITORY = 'Tikzen/Cidaren-Assistant'
 PROJECT_URL = f'https://github.com/{REPOSITORY}'
 RELEASES_URL = f'{PROJECT_URL}/releases/latest'

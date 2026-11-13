@@ -1,0 +1,66 @@
+name: Windows portable release
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag
+        required: true
+        default: v0.1.1-windows-preview.1
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    env:
+      QT_QPA_PLATFORM: offscreen
+      PYTHONUTF8: '1'
+      CIDAREN_ASSISTANT_STATE_DIR: ${{ github.workspace }}\build\selftest-state
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt "numpy<2" pyinstaller==6.22.3
+      - name: Offline regressions including actual PowerShell update and restart
+        run: python -m unittest discover -s tests -v
+      - name: Build GUI and capture helper
+        run: python -m PyInstaller --noconfirm --clean packaging/windows.spec
+      - name: Verify frozen GUI, model, multi-window and capture helper
+        run: python packaging/verify_windows.py
+      - name: Archive and create per-file update manifest
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist/CidarenAssistant-Windows-x64 -DestinationPath dist/CidarenAssistant-Windows-x64.zip
+          python packaging/release_manifest.py --root dist/CidarenAssistant-Windows-x64 --archive dist/CidarenAssistant-Windows-x64.zip --revision $env:GITHUB_SHA
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-build-diagnostics
+          path: |
+            build/*.json
+            build/*.png
+            build/**/*.log
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CidarenAssistant-Windows-x64
+          path: |
+            dist/CidarenAssistant-Windows-x64.zip
+            dist/update-manifest-windows-x64.json
+            dist/SHA256SUMS.txt
+      - name: Publish tested portable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: >-
+          gh release create $env:RELEASE_TAG
+          dist/CidarenAssistant-Windows-x64.zip
+          dist/update-manifest-windows-x64.json
+          dist/SHA256SUMS.txt
+          --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --prerelease
+          --title "词达人小助手 Windows $env:RELEASE_TAG"
+          --notes-file docs/windows-release-notes.md

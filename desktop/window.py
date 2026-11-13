@@ -1140,15 +1140,21 @@ class AssistantWindow(QMainWindow):
             QtWidgets.QApplication.clipboard().setText(text)
 
     def check_update(self):
-        if self.call and self.call.isRunning(): return
-        from api.update import get_update
-        self.call = CallWorker(get_update, self)
-        self.call.result.connect(lambda tag: self.log('目前还没有发布版本' if tag == '0' else f'最新版本：{tag}，可在「帮助 → 项目首页」下载'))
-        self.call.error.connect(lambda message: self.log(f'检查更新失败：{message}'))
-        self.call.finished.connect(self.call_finished)
-        self.call.start()
+        from desktop.update_dialog import UpdateDialog
+        dialog = getattr(self, 'update_dialog', None)
+        if dialog is not None and dialog.isVisible():
+            dialog.raise_()
+            return
+        self.update_dialog = UpdateDialog(self)
+        self.update_dialog.show()
 
     def closeEvent(self, event):
+        updater = getattr(self, 'update_dialog', None)
+        if updater is not None and updater.busy():
+            self._closing = True
+            updater.close()
+            event.ignore()
+            return
         if self.running():
             self._closing = True
             self.stop_queue()

@@ -37,3 +37,7 @@ config/word_cache.sqlite3*
 
 # Local IDE settings
 .idea/
+
+# Local updater state
+.update-state.json
+.update-result.json
