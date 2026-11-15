@@ -41,6 +41,7 @@ class TaskWorker(QThread):
         self.redo_enabled = redo_enabled
         self._is_running = True
         self.start_time = None
+        self._ai_unit_circuits = {}
         self.current_task_name = ''
         self.current_index = 0
         self.current_total = 0
@@ -59,6 +60,10 @@ class TaskWorker(QThread):
             task_name = task_info['task_name']
             self.current_task_name = task_name
             self.__dict__.pop('_ai_fallback', None)
+            if 'public_info' in globals():
+                from util.ai_settings import model_fingerprint
+                key = (str(task_info.get('course_id')), str(task_info.get('release_id')), task_name, model_fingerprint(getattr(public_info, 'ai_settings', {})))
+                public_info.ai_unit_state = self._ai_unit_circuits.setdefault(key, {'failures': 0, 'disabled': False})
             self.current_index = index
             self.current_total = total
             main.logger.info(f"开始执行任务[{index}/{total}]：{task_name}")

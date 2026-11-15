@@ -101,13 +101,30 @@ def decode_answer(info, mode, value):
 
 
 class AIFallback:
-    def __init__(self, settings=None, cancelled=None, notice=None):
+    def __init__(self, settings=None, cancelled=None, notice=None, unit_state=None):
         self.settings = load_settings() if settings is None else settings
         self.cancelled = cancelled or (lambda: False)
         self.notice = notice or (lambda message: None)
-        self.calls, self.failures, self.disabled = 0, 0, False
+        self.calls = 0
+        self.unit_state = unit_state if unit_state is not None else {'failures': 0, 'disabled': False}
         self.cache = {}
         self.warned = set()
+
+    @property
+    def failures(self):
+        return self.unit_state.get('failures', 0)
+
+    @failures.setter
+    def failures(self, value):
+        self.unit_state['failures'] = value
+
+    @property
+    def disabled(self):
+        return self.unit_state.get('disabled', False)
+
+    @disabled.setter
+    def disabled(self, value):
+        self.unit_state['disabled'] = value
 
     def _warn(self, message):
         if message not in self.warned:
@@ -127,7 +144,7 @@ class AIFallback:
                               json=payload, stream=True, allow_redirects=False,
                               timeout=(5, int(self.settings['timeout']))) as response:
                 if response.status_code in (401, 403, 404, 429):
-                    return None, f'AI 接口返回 {response.status_code}，本任务停用 AI 兜底', True
+                    return None, f'AI 暂不可用（{response.status_code}），已回退普通猜答', False
                 response.raise_for_status()
                 if response.status_code != 200:
                     return None, 'AI 接口未返回正常响应', False
@@ -145,7 +162,10 @@ class AIFallback:
                 return data.get('answer'), '', False
 
     def solve(self, info, mode):
-        if not self.settings.get('enabled') or self.disabled:
+        if not self.settings.get('enabled'):
+            return None
+        if self.disabled:
+            self._warn('本单元 AI 连续失败三次，后续不再请求 AI，沿用普通猜答；下一单元重新尝试')
             return None
         self._check_cancelled()
         if not self.settings.get('api_key'):
@@ -197,7 +217,7 @@ class AIFallback:
             answer = None
         if answer is None:
             self.failures += 1
-            self.disabled = fatal or self.failures >= 3
+            self.disabled = self.failures >= 3
             self._warn(error or 'AI 未提供符合题目约束的答案，沿用普通兜底')
         else:
             self.failures = 0

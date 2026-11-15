@@ -1,7 +1,7 @@
 from PyQt6 import QtCore, QtGui, QtWidgets
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QCursor, QIcon
-from PyQt6.QtWidgets import QWidget
+from PyQt6.QtWidgets import QWidget, QMessageBox
 
 from log.log import Log
 
@@ -191,6 +191,11 @@ class Ui_Form(QWidget):
 
         self.retranslateUi(Form)
         self.tabWidget.setCurrentIndex(0)
+        self._close_after_test = False
+        self.ai_preferences.state_changed.connect(self.update_ai_save_controls)
+        self.ai_preferences.test_finished.connect(self.ai_test_finished)
+        self.tabWidget.currentChanged.connect(self.update_ai_save_controls)
+        self.update_ai_save_controls()
         QtCore.QMetaObject.connectSlotsByName(Form)
 
     def retranslateUi(self, Form):
@@ -223,6 +228,31 @@ class Ui_Form(QWidget):
         self.confirmBtn.setText(_translate("Form", "确定"))
         self.cancelBtn.setText(_translate("Form", "取消"))
         self.inputBtn.setText(_translate("Form", "应用"))
+
+    def ai_save_blocked(self):
+        return (self.tabWidget.currentWidget() is self.ai_preferences or self.ai_preferences.is_dirty()) and not self.ai_preferences.is_tested()
+
+    def update_ai_save_controls(self, *_):
+        blocked = self.ai_save_blocked()
+        for button in (self.inputBtn, self.confirmBtn):
+            # 保留点击事件以解释原因；所有保存操作仍由 input 中的校验拦截。
+            button.setProperty('needsAiTest', blocked)
+            button.setToolTip('请先测试模型，测试成功后才能保存' if blocked else '')
+            button.setAccessibleDescription(button.toolTip())
+            button.setStyleSheet('QPushButton[needsAiTest="true"], QPushButton[needsAiTest="true"]:hover { color: palette(mid); background: palette(window); border: 1px solid palette(midlight); }')
+            button.style().unpolish(button); button.style().polish(button)
+
+    def ai_test_finished(self):
+        if self._close_after_test:
+            QtCore.QTimer.singleShot(0, self.close)
+
+    def closeEvent(self, event):
+        if self.ai_preferences.busy():
+            self._close_after_test = True
+            self.ai_preferences.cancel_test()
+            event.ignore()
+        else:
+            event.accept()
 
     def select_music_file(self):
         """
@@ -263,6 +293,10 @@ class Ui_Form(QWidget):
         """
         self.warn_info.clear()
         self.warn_info.setStyleSheet("color: #c4352b;")
+        if self.ai_save_blocked():
+            self.warn_info.setText('请先测试模型，测试成功后才能保存 AI 配置')
+            QMessageBox.warning(self, '需要先测试模型', '请先点击「测试模型」，测试成功后才能应用或保存 AI 配置。')
+            return False
         if self.max_time.value() < self.min_time.value():
             self.warn_info.setText("最长等待不能短于最短等待，请调整后再保存")
         elif self.max_time_2.value() < self.min_time_2.value():

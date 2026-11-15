@@ -234,7 +234,8 @@ class TaskEngine:
             from util.ai_settings import DEFAULTS
             self._ai_fallback = AIFallback(settings=getattr(public_info, 'ai_settings', dict(DEFAULTS)),
                                            cancelled=lambda: not self._is_running,
-                                           notice=notice.emit if notice is not None else None)
+                                           notice=notice.emit if notice is not None else None,
+                                           unit_state=getattr(public_info, 'ai_unit_state', None))
         ai_answer = self._ai_fallback.solve(public_info, mode)
         if has_answer(ai_answer):
             return ai_answer

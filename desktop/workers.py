@@ -37,13 +37,14 @@ class QueueWorker(QThread):
     notice = pyqtSignal(str)
     problem = pyqtSignal(str)
 
-    def __init__(self, queue, account, token, template, refresh=True, engine_factory=TaskEngine):
+    def __init__(self, queue, account, token, template, refresh=True, engine_factory=TaskEngine, ai_unit_circuits=None):
         super().__init__()
         self.queue, self.account, self.token = queue, account, token
         self.template = deepcopy(template)
         self.refresh = refresh
         self.engine_factory = engine_factory
         self.active_id = None
+        self.ai_unit_circuits = ai_unit_circuits if ai_unit_circuits is not None else {}
         self.control = RunControl(on_pause=self._paused)
 
     def _paused(self, paused):
@@ -100,6 +101,10 @@ class QueueWorker(QThread):
                         task = refreshed_task(job.task, fresh) if self.refresh else job.task
                         if task is None:
                             raise JobSkipped('任务已不在当前可执行列表中，请刷新后确认是否过期或已移除')
+                        from util.ai_settings import model_fingerprint
+                        unit_key = (self.account, str(task.get('course_id')), str(task.get('release_id')), str(task.get('task_name')),
+                                    model_fingerprint(getattr(info, 'ai_settings', {})))
+                        info.ai_unit_state = self.ai_unit_circuits.setdefault(unit_key, {'failures': 0, 'disabled': False})
                         self.queue.update(job.id, task=task)
                         self.changed.emit()
                         from util.answer_lib import load_lib

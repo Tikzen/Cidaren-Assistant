@@ -349,14 +349,23 @@ def make_pages():
     settle(form)
     ai = form.ai_preferences
     render('10-ai-preferences.png', form, '10  可选 AI 答题兜底',
-           '默认关闭；填入自己的接口密钥后启用，下一次开始队列时生效。', [
-        mark(rect_of(form, ai.enabled), '启用 AI 兜底', '查词失败、未匹配或有歧义时介入；已有确定答案不额外调用。'),
+           '配置并测试成功后保存，再到开始队列上方勾选 AI 兜底。', [
         mark(united(rect_of(form, ai.preset), rect_of(form, ai.api_key)), '选择模型并填入密钥',
              '预设 DeepSeek Flash，也可自填 OpenAI 兼容地址和模型名称。'),
+        mark(rect_of(form, ai.test_button), '先测试模型', '测试成功才能应用；修改地址、模型或密钥后需要重新测试。'),
         mark(united(rect_of(form, ai.timeout), rect_of(form, ai.max_calls)), '限制等待与调用次数',
              '超时或连续失败会沿用普通兜底，不会无限等待。'),
     ])
     close(form)
+
+    ui = main_window()
+    render('11-ai-toggle.png', ui, '11  在开始队列前选择 AI 兜底',
+           '先在首选项测试并保存模型；未配置时勾选会被拒绝。', [
+        mark(united(rect_of(ui, ui.ai_toggle), rect_of(ui, ui.ai_badge)), '按需勾选 AI 兜底',
+             '开关在开始队列上方；悬停感叹号可查看提示。'),
+        mark(rect_of(ui, ui.run_button), '开始执行队列', 'AI 不可用会退回普通猜答，同单元连续三次失败后不再调用。'),
+    ], crop=rect_of(ui, ui.queue_list.parentWidget()).adjusted(-7, -7, 7, 7))
+    close(ui)
 
 
 if __name__ == '__main__':

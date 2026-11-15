@@ -167,6 +167,7 @@ class AssistantWindow(QMainWindow):
         self._closing = False
         self._queue_refresh_pending = False
         self._other_running = False
+        self._ai_unit_circuits = {}
         self._last_active = None
         self._theme_key = None
         self._tokens = theme.tokens(QtWidgets.QApplication.palette())
@@ -438,12 +439,39 @@ class AssistantWindow(QMainWindow):
         self.full_button = self.button('一键满分', self.add_full)
         self.full_button.setToolTip('把左侧选中的任务以「一键满分」加到队尾，并开始执行队列。\n\n' + app_info.FULL_TIP)
         self.full_badge = InfoBadge(app_info.FULL_TIP)
-        run_row.addWidget(self.full_button)
-        run_row.addWidget(self.full_badge)
+        full_group = QWidget()
+        full_layout = QHBoxLayout(full_group)
+        full_layout.setContentsMargins(0, 0, 0, 0)
+        full_layout.setSpacing(8)
+        full_layout.addWidget(self.full_button)
+        full_layout.addWidget(self.full_badge)
+        run_row.addWidget(full_group, 0, Qt.AlignmentFlag.AlignBottom)
         run_row.addSpacing(6)
-        run_row.addWidget(self.run_button, 1)
-        run_row.addWidget(self.pause_button, 1)
-        run_row.addWidget(self.stop_button, 1)
+        execution = QWidget()
+        execution_layout = QVBoxLayout(execution)
+        execution_layout.setContentsMargins(0, 0, 0, 0)
+        execution_layout.setSpacing(6)
+        ai_row = QHBoxLayout()
+        ai_row.setSpacing(6)
+        self.ai_toggle = QCheckBox('AI 兜底')
+        self.ai_toggle.setObjectName('aiFallbackToggle')
+        self.ai_badge = InfoBadge(app_info.AI_FALLBACK_TIP)
+        self.ai_toggle.setToolTip(app_info.AI_FALLBACK_TIP)
+        from util.ai_settings import load_settings, configuration_error
+        ai_settings = load_settings()
+        self.ai_toggle.setChecked(bool(ai_settings['enabled'] and not configuration_error(ai_settings)))
+        self.ai_toggle.toggled.connect(self.toggle_ai)
+        ai_row.addWidget(self.ai_toggle)
+        ai_row.addWidget(self.ai_badge)
+        ai_row.addStretch()
+        execution_layout.addLayout(ai_row)
+        execution_buttons = QHBoxLayout()
+        execution_buttons.setSpacing(8)
+        execution_buttons.addWidget(self.run_button, 1)
+        execution_buttons.addWidget(self.pause_button, 1)
+        execution_buttons.addWidget(self.stop_button, 1)
+        execution_layout.addLayout(execution_buttons)
+        run_row.addWidget(execution, 1)
         right.addLayout(run_row)
         return box
 
@@ -910,6 +938,34 @@ class AssistantWindow(QMainWindow):
             self.progress.setValue(0)
             self.stats.setText('正确 0  错误 0  跳过 0')
 
+    def _set_ai_checked(self, checked):
+        blocker = QtCore.QSignalBlocker(self.ai_toggle)
+        self.ai_toggle.setChecked(checked)
+        del blocker
+
+    def _ai_configuration_warning(self, reason):
+        QMessageBox.warning(self, '尚未配置可用的 AI 模型',
+                            '请先在「设置 → 首选项 → AI 兜底」中配置模型，通过「测试模型」并保存后再开启。\n\n' + reason)
+
+    def toggle_ai(self, checked):
+        if self.running():
+            self._set_ai_checked(not checked)
+            return
+        from util.ai_settings import load_settings, save_settings, configuration_error
+        settings = load_settings()
+        if checked:
+            error = configuration_error(settings)
+            if error:
+                self._set_ai_checked(False)
+                self._ai_configuration_warning(error)
+                return
+        settings['enabled'] = checked
+        try:
+            self.info.ai_settings = save_settings(settings)
+        except (OSError, ValueError) as error:
+            self._set_ai_checked(not checked)
+            QMessageBox.warning(self, 'AI 设置未保存', str(error))
+
     def start_queue(self):
         if self.running(): return
         if not self.editable(): return
@@ -919,10 +975,15 @@ class AssistantWindow(QMainWindow):
         if not any(j.state == State.WAITING for j in self.queue.snapshot(self.account)):
             self.log('队列里没有等待执行的任务')
             return
-        if hasattr(self.info, 'ai_settings'):
-            from util.ai_settings import load_settings
-            self.info.ai_settings = load_settings()
-        self.worker = QueueWorker(self.queue, self.account, self.token, self.info)
+        from util.ai_settings import load_settings, configuration_error
+        settings = load_settings()
+        settings['enabled'] = self.ai_toggle.isChecked()
+        if settings['enabled'] and configuration_error(settings):
+            self._set_ai_checked(False)
+            self._ai_configuration_warning(configuration_error(settings))
+            return
+        self.info.ai_settings = settings
+        self.worker = QueueWorker(self.queue, self.account, self.token, self.info, ai_unit_circuits=self._ai_unit_circuits)
         self.worker.changed.connect(self.refresh_queue)
         self.worker.notice.connect(self.log)
         self.worker.problem.connect(self.log)
@@ -981,6 +1042,7 @@ class AssistantWindow(QMainWindow):
         self.capture_button.setEnabled(not loading)
         self.capture_button.setToolTip('队列运行中获取的新 Token 只会填入输入框，不影响当前队列' if busy
                                        else '打开内置工具，从电脑版微信中自动获取 Token')
+        self.ai_toggle.setEnabled(not busy)
         self.run_button.setEnabled(not busy and logged)
         self.pause_button.setEnabled(busy)
         self.stop_button.setEnabled(busy)

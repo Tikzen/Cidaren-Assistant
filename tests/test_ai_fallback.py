@@ -12,7 +12,7 @@ from api.main_api import SecurityVerifyError, ApiResponseError, query_word
 from api.network_retry import RequestCancelled, RequestRetryExhausted
 from core.engine import TaskEngine
 from util.ai_fallback import AIFallback, decode_answer, question_data
-from util.ai_settings import DEFAULTS, save_settings, load_settings, settings_path, endpoint
+from util.ai_settings import DEFAULTS, save_settings, load_settings, settings_path, endpoint, model_fingerprint
 from util.redo_session import RedoSession
 
 
@@ -84,13 +84,13 @@ class AiRequestTests(unittest.TestCase):
             self.assertIsNone(ai.solve(other,17))
         self.assertEqual(request.call_count,1)
 
-    def test_auth_error_opens_circuit_without_retrying(self):
+    def test_auth_error_falls_back_and_opens_circuit_after_three_attempts(self):
         ai=solver()
-        with patch.object(ai,'_request',return_value=(None,'AI 接口返回 401',True)) as request:
-            self.assertIsNone(ai.solve(question(),17))
-            other=question();other.exam['stem']['content']='different'
-            self.assertIsNone(ai.solve(other,17))
-        self.assertEqual(request.call_count,1)
+        with patch.object(ai,'_request',return_value=(None,'AI 暂不可用',False)) as request:
+            for i in range(4):
+                q=question();q.exam['stem']['content']=str(i)
+                self.assertIsNone(ai.solve(q,17))
+        self.assertEqual(request.call_count,3)
 
     def test_cancel_during_request_returns_promptly_without_submitting(self):
         cancel=threading.Event();release=threading.Event()
@@ -171,7 +171,9 @@ class AiSettingsTests(unittest.TestCase):
     def test_default_disabled_and_private_storage_does_not_touch_project_config(self):
         with tempfile.TemporaryDirectory() as folder,patch.dict(os.environ,CIDAREN_ASSISTANT_STATE_DIR=folder):
             self.assertFalse(load_settings()['enabled'])
-            save_settings(dict(DEFAULTS,enabled=True,api_key='test-key-not-real'))
+            values=dict(DEFAULTS,enabled=True,api_key='test-key-not-real')
+            values['verified']=model_fingerprint(values)
+            save_settings(values)
             self.assertEqual(load_settings()['model'],'deepseek-flash')
             self.assertEqual(settings_path().parent,Path(folder))
             if os.name!='nt':self.assertEqual(settings_path().stat().st_mode & 0o777,0o600)
@@ -196,18 +198,19 @@ class AiPreferenceUiTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ,CIDAREN_ASSISTANT_STATE_DIR=folder):
             page=AIPreferences()
             try:
-                self.assertFalse(page.enabled.isChecked())
+                self.assertFalse(load_settings()['enabled'])
                 self.assertEqual(page.model.text(),'deepseek-flash')
                 self.assertEqual(page.api_key.echoMode(),QLineEdit.EchoMode.Password)
                 page.preset.setCurrentIndex(1)
                 page.base_url.setText('https://example.com/v1')
                 page.model.setText('custom-model')
                 page.api_key.setText('test-key-not-real')
-                page.enabled.setChecked(True)
+                page.verified_hash=model_fingerprint(page.values())
                 page.save()
                 self.assertEqual(load_settings()['model'],'custom-model')
                 self.assertEqual(load_settings()['api_key'],'test-key-not-real')
-                self.assertTrue(load_settings()['enabled'])
+                self.assertFalse(load_settings()['enabled'])
+                self.assertEqual(load_settings()['verified'],model_fingerprint(page.values()))
             finally:page.close()
 
     def test_unmodified_settings_do_not_write_credentials(self):
@@ -217,7 +220,7 @@ class AiPreferenceUiTests(unittest.TestCase):
             try:
                 page.save()
                 self.assertFalse(settings_path().exists())
-                page.enabled.setChecked(True)
+                page.model.setText('changed-model')
                 with self.assertRaises(ValueError):page.save()
             finally:page.close()
 

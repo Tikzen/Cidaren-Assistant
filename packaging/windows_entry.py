@@ -57,7 +57,7 @@ def main():
         result['model_output'] = [token.lemma_ for token in nlp('running')]
         result['model_loaded'] = True
         def finish():
-            result['ai_default_enabled'] = preferences.ai_preferences.enabled.isChecked()
+            result['ai_default_enabled'] = window.ai_toggle.isChecked()
             result['ai_default_model'] = preferences.ai_preferences.model.text()
             preferences.grab().save(str(report.with_name(report.stem + '-ai.png')))
             preferences.close()
