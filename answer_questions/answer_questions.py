@@ -486,9 +486,8 @@ def full_sentence(public_info) -> int or str:
         else:
             if option['content'] == word:
                 return option_word
-    query_answer.logger.error("补全句子失败,猜第3个选项")
-    # submit 1#0,0#2 or 1 应该分开写提升正确率
-    return _sentence_option_answer(public_info.exam['options'][2], None)
+    query_answer.logger.warning('补全句子未匹配，交由 AI 或猜答兜底')
+    return None
 
 
 # full word
@@ -497,6 +496,10 @@ def complete_sentence(public_info):
     word_len = public_info.exam['w_lens'][0]
     # submit not  case sensitive
     word_start_with = public_info.exam['w_tip'].lower()
+    candidates = {form for word in public_info.word_list if isinstance(word, str)
+                  for form in (word, word + 's') if form.startswith(word_start_with) and len(form) == word_len}
+    if len(candidates) > 1:
+        public_info.answer_uncertain = '多个拼写候选符合前缀和长度，需结合句意'
     # iterate over all word in the unit
     for word in public_info.word_list:
         if word.startswith(word_start_with):
@@ -509,8 +512,8 @@ def complete_sentence(public_info):
                 result = word_examples(public_info, [word])
                 if result:
                     return result
-    query_answer.logger.error(f"找不到答案,提交{word}")
-    return word
+    query_answer.logger.warning('补全单词未匹配，交由 AI 或猜答兜底')
+    return None
 
 
 # mode 73: 多空首字母补全单词(提交JSON数组)

@@ -13,6 +13,7 @@ from util.basic_util import create_timestamp, resolve_word_ci
 from util.wrong_memory import record as record_wrong_answer
 from util.word_cache import lookup as lookup_cached_word, save as save_cached_word
 from core.task_identity import valid_id
+from api.network_retry import RequestRetryExhausted
 
 # create logger
 api = Log('main_api')
@@ -272,12 +273,17 @@ def query_word(public_info, word):
     api.logger.info(f"查询单词{word}")
     # query word in the unit
     url = f'Course/StudyWordInfo?course_id={public_info.course_id}&list_id={public_info.now_unit}&word={word}&timestamp={create_timestamp()}&version=2.6.1.231204&app_type=1'
-    word = check_jv_and_retry_get(requests.get_session('rqs_session').get, basic_url + url)
+    try:
+        word = check_jv_and_retry_get(requests.get_session('rqs_session').get, basic_url + url)
+    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout, RequestRetryExhausted) as error:
+        if not getattr(public_info, 'ai_settings', {}).get('enabled'):
+            raise
+        raise LookupError('查词网络请求失败，交由 AI 或猜答兜底') from error
     # 检查请求是否成功
     try:
         handle_response(word)
     except ApiResponseError as error:
-        if error.code == 120:
+        if error.code in (120, 10005):
             # 仅查词接口的卡片数据错误属于当前题的数据缺失。
             # 登录失效、安全验证及其他业务拒绝仍原样上抛。
             raise LookupError(f'当前单词卡片不可用：{error.service_message}') from error

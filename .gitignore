@@ -41,3 +41,6 @@ config/word_cache.sqlite3*
 # Local updater state
 .update-state.json
 .update-result.json
+
+# AI credentials belong only to local user settings
+ai-settings.json

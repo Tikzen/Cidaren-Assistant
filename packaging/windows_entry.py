@@ -27,6 +27,7 @@ def main():
         from desktop.update_dialog import UpdateDialog, UpdateWorker
         from core.app_updates import UpdatePlan
         from app_info import VERSION
+        from view.setting import Ui_Form
         from publicInfo.publicInfo import PublicInfo
         from util.word_revert import _get_nlp
         from util.app_path import app_root
@@ -46,12 +47,20 @@ def main():
         update_dialog.checked(UpdatePlan(str(root), VERSION, 'offline', 'windows', files=[dict(path='app.exe', size=1)]))
         update_dialog.on_progress('正在下载更新…', 38)
         update_dialog.show()
+        preferences = Ui_Form(info)
+        preferences.tabWidget.setCurrentIndex(2)
+        preferences.resize(640, 650)
+        preferences.show()
         result = {'window_created': True, 'frozen': bool(getattr(sys, 'frozen', False)),
                   'model_loaded': False, 'network_requests': 0}
         nlp = _get_nlp()
         result['model_output'] = [token.lemma_ for token in nlp('running')]
         result['model_loaded'] = True
         def finish():
+            result['ai_default_enabled'] = preferences.ai_preferences.enabled.isChecked()
+            result['ai_default_model'] = preferences.ai_preferences.model.text()
+            preferences.grab().save(str(report.with_name(report.stem + '-ai.png')))
+            preferences.close()
             result['version'] = VERSION
             result['update_versions'] = [update_dialog.current_version.text(), update_dialog.latest_version.text()]
             result['update_progress_height'] = update_dialog.progress.height()

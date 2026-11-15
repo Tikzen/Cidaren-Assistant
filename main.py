@@ -58,6 +58,7 @@ class TaskWorker(QThread):
                 break
             task_name = task_info['task_name']
             self.current_task_name = task_name
+            self.__dict__.pop('_ai_fallback', None)
             self.current_index = index
             self.current_total = total
             main.logger.info(f"开始执行任务[{index}/{total}]：{task_name}")
@@ -154,6 +155,8 @@ if __name__ == '__main__' and '--legacy' in sys.argv:
     path = os.path.dirname(__file__)
     main.logger.info("初始化公共组件")
     public_info = PublicInfo(path)
+    from util.ai_settings import load_settings
+    public_info.ai_settings = load_settings()
     main.logger.info(f"当前版本号：{public_info.version}")
 
     app = QApplication(sys.argv)

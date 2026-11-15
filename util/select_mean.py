@@ -80,19 +80,19 @@ def select_mean(public_info) -> int:
     :return: 选择的匹配的选项
     """
     options = filler_option(public_info)
-    # 匹配选项
-    for index, option in enumerate(options, 0):
-        for mean in public_info.word_means:
-            # 选项顺序混乱，重排序
-            if sorted(option.replace(" ", '')) == sorted(mean.replace(" ", '')) or mean in option:
-                select_module.logger.info(f"匹配第{index + 1}个选项选项[{option}]")
-                _log_context_scores(public_info, options, index)
-                return index
-    # 匹配失败 随机提交一个
-    select_module.logger.warning("匹配失败，随机提交")
-    guess = random.randint(0, len(options) - 1)
-    _log_context_scores(public_info, options, guess)
-    return guess
+    # 先收集所有命中，区分“确定答案”和“词典中的多个词义同时命中”。
+    matches = [index for index, option in enumerate(options)
+               if any(sorted(option.replace(' ', '')) == sorted(mean.replace(' ', '')) or mean in option
+                      for mean in public_info.word_means)]
+    if matches:
+        index = matches[0]
+        if len(matches) > 1:
+            public_info.answer_uncertain = '词典多个释义同时命中，当前语境需消歧'
+        select_module.logger.info(f'匹配第{index + 1}个选项选项[{options[index]}]')
+        _log_context_scores(public_info, options, index)
+        return index
+    select_module.logger.warning('词义匹配失败，交由 AI 或猜答兜底')
+    return None
 
 
 # select match word
@@ -112,9 +112,8 @@ def select_match_word(public_info, word_mean) -> int:
             if sorted(word_mean.replace(" ", '')) == sorted(mean.replace(" ", '')):
                 select_module.logger.info(f"上下文评分(影子): 命中={word} 候选={shadow}")
                 return public_info.source_option.index(word)
-    select_module.logger.error("匹配失败,猜第3个选项")
-    select_module.logger.info(f"上下文评分(影子): 猜第3个 候选={shadow}")
-    return 2
+    select_module.logger.warning("汉译英匹配失败，交由 AI 或猜答兜底")
+    return None
 
 
 def is_word_exist(public_info, option) -> bool:

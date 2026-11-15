@@ -203,6 +203,8 @@ class TaskEngine:
     def _answer_question(self, public_info, mode):
         """没找到答案时猜答；可恢复的解析异常由兼容模式兜底，不自动跳题。"""
         reason = '未找到确定答案'
+        proposed, parse_error = None, None
+        public_info.answer_uncertain = ''
         try:
             session = getattr(public_info, 'redo_session', None)
             if session is not None:
@@ -215,16 +217,31 @@ class TaskEngine:
                     return form_answer
             proposed = self.answer_fn(public_info, mode)
             proposed = session.adjust(public_info, proposed) if session is not None else proposed
-            if has_answer(proposed):
+            if has_answer(proposed) and not public_info.answer_uncertain:
                 return proposed
+            if public_info.answer_uncertain:
+                reason = public_info.answer_uncertain
         except (SecurityVerifyError, ApiResponseError, requests.exceptions.RequestException):
             raise
         except Exception as error:
-            if not getattr(public_info, 'compat_mode', True):
-                # 关闭兼容模式时保留用户要求的严格报错，但仍禁止自动跳过。
-                raise
+            proposed = None
+            parse_error = error
             reason = f'答案解析异常（{error}）'
             self.logger.error(reason, exc_info=True)
+        if not hasattr(self, '_ai_fallback'):
+            from util.ai_fallback import AIFallback
+            notice = getattr(self, 'task_notice', None)
+            from util.ai_settings import DEFAULTS
+            self._ai_fallback = AIFallback(settings=getattr(public_info, 'ai_settings', dict(DEFAULTS)),
+                                           cancelled=lambda: not self._is_running,
+                                           notice=notice.emit if notice is not None else None)
+        ai_answer = self._ai_fallback.solve(public_info, mode)
+        if has_answer(ai_answer):
+            return ai_answer
+        if has_answer(proposed):
+            return proposed
+        if parse_error is not None and not getattr(public_info, 'compat_mode', True):
+            raise parse_error
         try:
             guessed = self.guess_fn(public_info, mode)
         except (SecurityVerifyError, ApiResponseError, requests.exceptions.RequestException):

@@ -17,6 +17,7 @@ assert process.returncode == 0, report.read_text() if report.exists() else proce
 result = json.loads(report.read_text())
 assert result['window_created'] and result['model_loaded'] and result['frozen'], result
 assert result['version'] == VERSION and result['update_versions'] == [VERSION, VERSION], result
+assert result['ai_default_enabled'] is False and result['ai_default_model'] == 'deepseek-flash', result
 assert result['update_progress_height'] >= 12 and result['update_progress_text'] == '38%', result
 # Windows 属性中的文件版本也必须与软件实际版本一致。
 import ctypes

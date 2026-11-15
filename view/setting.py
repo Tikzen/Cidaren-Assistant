@@ -144,6 +144,10 @@ class Ui_Form(QWidget):
         other.addStretch()
         self.tabWidget.addTab(self.tab_2, "")
 
+        from view.ai_preferences import AIPreferences
+        self.ai_preferences = AIPreferences(self)
+        self.tabWidget.addTab(self.ai_preferences, 'AI 兜底')
+
         self.warn_info = QLabel("")
         self.warn_info.setWordWrap(True)
         self.warn_info.setObjectName("warn_info")
@@ -264,6 +268,12 @@ class Ui_Form(QWidget):
         elif self.max_time_2.value() < self.min_time_2.value():
             self.warn_info.setText("最长用时不能短于最短用时，请调整后再保存")
         else:
+            try:
+                ai_settings = self.ai_preferences.save()
+            except (OSError, ValueError, TypeError) as error:
+                self.warn_info.setText(str(error))
+                return False
+            self.public_info.ai_settings = ai_settings
             min_time = self.min_time.value()
             max_time = self.max_time.value()
             min_time_2 = self.min_time_2.value()

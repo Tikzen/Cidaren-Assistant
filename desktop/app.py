@@ -22,7 +22,10 @@ def run():
             QTimer.singleShot(1500, notice.accept)
             notice.exec()
             return 0
-        window = AssistantWindow(PublicInfo(root), root)
+        info = PublicInfo(root)
+        from util.ai_settings import load_settings
+        info.ai_settings = load_settings()
+        window = AssistantWindow(info, root)
         result = Path(root) / '.update-result.json'
         if result.exists():
             try:

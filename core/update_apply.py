@@ -18,7 +18,7 @@ def checked_path(root, name):
     if (not name or '\\' in name or ':' in name or path.is_absolute() or any(p in ('', '.', '..') or p.endswith((' ', '.')) or any(ord(c) < 32 for c in p)
                 or p.split('.')[0].casefold() in {'con', 'prn', 'aux', 'nul', *(f'com{i}' for i in range(1, 10)), *(f'lpt{i}' for i in range(1, 10))} for p in parts)
             or any(p.casefold() in BLOCKED for p in parts) or path.name.casefold() == 'token.txt'
-            or path.name.casefold().startswith('capture.log') or path.name.casefold() in ('.update-state.json', '.update-result.json', 'wrong_memory.json')
+            or path.name.casefold().startswith('capture.log') or path.name.casefold() in ('.update-state.json', '.update-result.json', 'wrong_memory.json', 'ai-settings.json')
             or path.name.casefold().endswith(('.log', '.lock', '.sqlite3', '.sqlite3-wal', '.sqlite3-shm'))):
         raise ValueError('拒绝更新受保护或不安全的路径：' + name)
     target = Path(root)
@@ -162,7 +162,7 @@ function SafePath($base, $name) {
   $blocked = @('.git','.venv','venv','env','__pycache__','.idea','config','logs','build','dist','.updates')
   foreach ($part in $parts) { if (!$part -or $part -eq '.' -or $part -eq '..' -or $blocked -contains $part) { throw 'Protected update path' } }
   $leaf = $parts[-1]
-  if ($leaf -eq 'token.txt' -or $leaf -eq 'wrong_memory.json' -or $leaf.StartsWith('capture.log') -or $leaf -like '*.log' -or $leaf -like '*.lock' -or $leaf -like '*.sqlite3*' -or $leaf.StartsWith('.update-')) { throw 'Protected local data' }
+  if ($leaf -eq 'token.txt' -or $leaf -eq 'wrong_memory.json' -or $leaf -eq 'ai-settings.json' -or $leaf.StartsWith('capture.log') -or $leaf -like '*.log' -or $leaf -like '*.lock' -or $leaf -like '*.sqlite3*' -or $leaf.StartsWith('.update-')) { throw 'Protected local data' }
   $target = [IO.Path]::GetFullPath((Join-Path $base $name))
   if (!$target.StartsWith($base.TrimEnd('\')+'\',[StringComparison]::OrdinalIgnoreCase)) { throw 'Escaped update root' }
   $walk = $base

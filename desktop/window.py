@@ -919,6 +919,9 @@ class AssistantWindow(QMainWindow):
         if not any(j.state == State.WAITING for j in self.queue.snapshot(self.account)):
             self.log('队列里没有等待执行的任务')
             return
+        if hasattr(self.info, 'ai_settings'):
+            from util.ai_settings import load_settings
+            self.info.ai_settings = load_settings()
         self.worker = QueueWorker(self.queue, self.account, self.token, self.info)
         self.worker.changed.connect(self.refresh_queue)
         self.worker.notice.connect(self.log)

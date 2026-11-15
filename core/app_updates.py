@@ -37,7 +37,7 @@ def protected(name):
     return (bool({p.casefold() for p in path.parts} & PROTECTED) or leaf == 'token.txt'
             or leaf.startswith('capture.log')
             or leaf.endswith(('.log', '.lock', '.sqlite3', '.sqlite3-wal', '.sqlite3-shm'))
-            or leaf in ('.update-state.json', '.update-result.json', 'wrong_memory.json'))
+            or leaf in ('.update-state.json', '.update-result.json', 'wrong_memory.json', 'ai-settings.json'))
 
 
 def destination(root, name):

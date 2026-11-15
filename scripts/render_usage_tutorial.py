@@ -343,6 +343,21 @@ def make_pages():
     ])
     close(form)
 
+    form = Ui_Form(info())
+    form.resize(650, 660)
+    form.tabWidget.setCurrentIndex(2)
+    settle(form)
+    ai = form.ai_preferences
+    render('10-ai-preferences.png', form, '10  可选 AI 答题兜底',
+           '默认关闭；填入自己的接口密钥后启用，下一次开始队列时生效。', [
+        mark(rect_of(form, ai.enabled), '启用 AI 兜底', '查词失败、未匹配或有歧义时介入；已有确定答案不额外调用。'),
+        mark(united(rect_of(form, ai.preset), rect_of(form, ai.api_key)), '选择模型并填入密钥',
+             '预设 DeepSeek Flash，也可自填 OpenAI 兼容地址和模型名称。'),
+        mark(united(rect_of(form, ai.timeout), rect_of(form, ai.max_calls)), '限制等待与调用次数',
+             '超时或连续失败会沿用普通兜底，不会无限等待。'),
+    ])
+    close(form)
+
 
 if __name__ == '__main__':
     OUT.mkdir(parents=True, exist_ok=True)
