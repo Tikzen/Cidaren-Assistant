@@ -13,6 +13,7 @@ from unittest.mock import patch
 import zipfile
 
 from core.app_updates import UpdateClient, UpdatePlan, digest, protected, safe_path
+from core.update_http import UpdateNetworkError
 from core.instances import active_instances, instance_dir, instance_lease
 from core import update_apply
 
@@ -54,7 +55,7 @@ class UpdatesTests(unittest.TestCase):
                                  'config/config.json': b'default', 'token.txt': b'secret'})
         self.assertEqual([x['path'] for x in plan.files], ['change.py', 'new.py'])
         urls = []
-        def download(url, target, limit):
+        def download(url, target, limit, **kwargs):
             urls.append(url)
             target.write_bytes(b'new')
         with patch.object(self.client, '_download', side_effect=download):
@@ -67,7 +68,7 @@ class UpdatesTests(unittest.TestCase):
     def test_tampered_download_cleans_stage_without_replacing(self):
         self.file('main.py', 'old')
         plan = self.source_plan({'main.py': b'new'})
-        with patch.object(self.client, '_download', side_effect=lambda u,p,n: p.write_bytes(b'bad')):
+        with patch.object(self.client, '_download', side_effect=lambda u,p,n,**kwargs: p.write_bytes(b'bad')):
             with self.assertRaisesRegex(ValueError, '校验失败'):
                 self.client.prepare(plan)
         self.assertEqual((self.root/'main.py').read_text(), 'old')
@@ -78,6 +79,7 @@ class UpdatesTests(unittest.TestCase):
         data = b"VERSION = '1.0.0'\nraise RuntimeError('must not execute')\n"
         sha = hashlib.sha1(f'blob {len(data)}\0'.encode() + data).hexdigest()
         response = Mock(content=data)
+        response.iter_content.return_value = [data]
         with patch.object(self.client.session, 'get', return_value=response) as get:
             self.assertEqual(self.client._source_version('a'*40, [dict(type='blob', path='app_info.py', sha=sha)]), '1.0.0')
         self.assertIn('/'+'a'*40+'/app_info.py', get.call_args.args[0])
@@ -85,8 +87,10 @@ class UpdatesTests(unittest.TestCase):
 
     def test_source_refuses_version_file_mismatching_pinned_tree(self):
         from unittest.mock import Mock
-        with patch.object(self.client.session, 'get', return_value=Mock(content=b"VERSION = '9.9.9'")):
-            with self.assertRaisesRegex(ValueError, '校验失败'):
+        response = Mock()
+        response.iter_content.return_value = [b"VERSION = '9.9.9'"]
+        with patch.object(self.client.session, 'get', return_value=response):
+            with self.assertRaisesRegex(UpdateNetworkError, '校验失败'):
                 self.client._source_version('a'*40, [dict(type='blob', path='app_info.py', sha='0'*40)])
 
     def test_windows_manifest_displays_file_version_separately_from_release_tag(self):
@@ -130,7 +134,7 @@ class UpdatesTests(unittest.TestCase):
                           files=[dict(path='main.exe', size=3, hash=hashlib.sha256(b'new').hexdigest(), mode=0o644)],
                           archive_url='archive', archive_prefix='bundle', archive_sha256=hashlib.sha256(content).hexdigest())
         self.file('config/config.json', 'private')
-        with patch.object(self.client, '_download', side_effect=lambda u,p,n: p.write_bytes(content)) as download:
+        with patch.object(self.client, '_download', side_effect=lambda u,p,n,**kwargs: p.write_bytes(content)) as download:
             path = self.client.prepare(plan)
         download.assert_called_once()
         self.assertEqual((path.parent/'files/main.exe').read_bytes(), b'new')

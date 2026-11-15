@@ -12,7 +12,8 @@ import tempfile
 import zipfile
 
 import app_info
-from api.network_retry import RetryingSession
+import requests
+from core.update_http import UpdateHTTP
 from core.runtime import state_dir
 from core.instances import instance_dir
 
@@ -81,8 +82,11 @@ class UpdateClient:
         self.progress = progress or (lambda text, value=-1: None)
         self.cancelled = cancelled or (lambda: False)
         self.api = f'https://api.github.com/repos/{app_info.REPOSITORY}'
-        self.session = RetryingSession(max_attempts=2, timeout=(5, 20))
-        self.session.headers.update({'Accept': 'application/vnd.github+json', 'User-Agent': 'CidarenAssistant-Updater'})
+        self.session = requests.Session()
+        self.session.trust_env = False
+        self.session.max_redirects = 5
+        self.session.headers.update({'User-Agent': 'CidarenAssistant-Updater'})
+        self.http = UpdateHTTP(self.session, self.checkpoint, self.progress)
 
     def close(self):
         self.session.close()
@@ -91,14 +95,8 @@ class UpdateClient:
         if self.cancelled():
             raise InterruptedError('已取消更新，程序文件未替换')
 
-    def json(self, url):
-        self.checkpoint()
-        response = self.session.get(url)
-        try:
-            response.raise_for_status()
-            return response.json()
-        finally:
-            response.close()
+    def json(self, url, integrity=None):
+        return self.http.read(url, integrity=integrity, as_json=True)
 
     def check(self):
         self.progress('正在读取 GitHub 更新信息…', -1)
@@ -134,14 +132,8 @@ class UpdateClient:
         if item is None:
             raise ValueError('远端源码缺少版本信息')
         self.checkpoint()
-        response = self.session.get(f'https://raw.githubusercontent.com/{app_info.REPOSITORY}/{revision}/app_info.py')
-        try:
-            response.raise_for_status()
-            data = response.content
-        finally:
-            response.close()
-        if len(data) > 64 * 1024 or hashlib.sha1(f'blob {len(data)}\0'.encode() + data).hexdigest() != item['sha']:
-            raise ValueError('远端版本文件校验失败')
+        data = self.http.read(f'https://raw.githubusercontent.com/{app_info.REPOSITORY}/{revision}/app_info.py',
+                              maximum=64 * 1024, integrity=('git', item['sha']))
         # 只读取固定提交中的常量，不执行远端 Python 文件。
         for node in ast.parse(data.decode('utf-8-sig')).body:
             if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'VERSION' for t in node.targets):
@@ -158,7 +150,11 @@ class UpdateClient:
             manifest_asset = assets.get('update-manifest-windows-x64.json')
             if manifest_asset is None:
                 continue
-            manifest = self.json(manifest_asset['browser_download_url'])
+            manifest_digest = manifest_asset.get('digest') or ''
+            if manifest_digest and not manifest_digest.startswith('sha256:'):
+                raise ValueError('更新清单校验值格式不支持')
+            integrity = ('sha256', manifest_digest[7:]) if manifest_digest.startswith('sha256:') else None
+            manifest = self.json(manifest_asset['browser_download_url'], integrity=integrity)
             if manifest.get('schema') != 1 or manifest.get('platform') != 'windows-x64':
                 raise ValueError('更新清单格式或平台不匹配')
             archive = assets.get(manifest['archive'])
@@ -195,22 +191,8 @@ class UpdateClient:
         if len(plan.files) > 10000 or sum(f['size'] for f in plan.files) > MAX_TOTAL:
             raise ValueError('更新规模超出允许范围')
 
-    def _download(self, url, path, size_limit):
-        self.checkpoint()
-        response = self.session.get(url, stream=True)
-        try:
-            response.raise_for_status()
-            length = 0
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with path.open('wb') as stream:
-                for chunk in response.iter_content(1024 * 256):
-                    self.checkpoint()
-                    length += len(chunk)
-                    if length > size_limit:
-                        raise ValueError('下载内容超过预期大小')
-                    stream.write(chunk)
-        finally:
-            response.close()
+    def _download(self, url, path, size_limit, integrity=None):
+        self.http.download(url, path, size_limit, integrity=integrity)
 
     def prepare(self, plan):
         self.checkpoint()
@@ -230,7 +212,7 @@ class UpdateClient:
             if plan.kind == 'windows':
                 self.progress('正在下载安装包，完成后仅替换差异文件…', -1)
                 package = stage / 'download.zip'
-                self._download(plan.archive_url, package, MAX_TOTAL)
+                self._download(plan.archive_url, package, MAX_TOTAL, integrity=('sha256', plan.archive_sha256))
                 if digest(package) != plan.archive_sha256:
                     raise ValueError('安装包校验失败，未替换文件')
                 archive = zipfile.ZipFile(package)
@@ -247,7 +229,7 @@ class UpdateClient:
                     if archive is None:
                         from urllib.parse import quote
                         url = f'https://raw.githubusercontent.com/{app_info.REPOSITORY}/{plan.revision}/{quote(name)}'
-                        self._download(url, target, item['size'])
+                        self._download(url, target, item['size'], integrity=('git', item['hash']))
                     else:
                         member = (plan.archive_prefix.rstrip('/') + '/' if plan.archive_prefix else '') + name
                         info = archive.getinfo(member)

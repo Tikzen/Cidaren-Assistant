@@ -40,6 +40,15 @@ class UpdateUiTests(unittest.TestCase):
         self.assertIn('完整安装包', self.dialog.notes.toPlainText())
         self.assertTrue(self.dialog.apply.isEnabled())
 
+    def test_errors_distinguish_manifest_check_from_preparing_update(self):
+        self.dialog.on_error('更新清单获取失败')
+        self.assertEqual(self.dialog.status.text(), '检查更新失败：更新清单获取失败')
+        self.assertEqual(self.dialog.latest_version.text(), '未能获取')
+        self.dialog.checked(self.plan)
+        self.dialog.on_error('安装包下载失败')
+        self.assertEqual(self.dialog.status.text(), '更新准备失败：安装包下载失败')
+        self.assertEqual(self.dialog.latest_version.text(), '1')
+
     def test_current_and_remote_versions_stay_visible_during_progress(self):
         self.plan.version = 'v1.0.0'
         self.dialog.checked(self.plan)

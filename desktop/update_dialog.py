@@ -152,7 +152,7 @@ class UpdateDialog(QDialog):
         self.progress_text.setText('未完成')
         if self.plan is None:
             self.latest_version.setText('未能获取')
-        self.status.setText('更新未应用：' + message)
+        self.status.setText(('检查更新失败：' if self.plan is None else '更新准备失败：') + message)
 
     def checked(self, plan):
         if self._closing: return
