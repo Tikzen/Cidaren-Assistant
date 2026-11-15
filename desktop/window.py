@@ -462,6 +462,7 @@ class AssistantWindow(QMainWindow):
         self.ai_toggle.setChecked(bool(ai_settings['enabled'] and not configuration_error(ai_settings)))
         self.ai_toggle.toggled.connect(self.toggle_ai)
         ai_row.addWidget(self.ai_toggle)
+        ai_row.addSpacing(12)
         ai_row.addWidget(self.ai_badge)
         ai_row.addStretch()
         execution_layout.addLayout(ai_row)
