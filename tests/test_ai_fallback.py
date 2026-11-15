@@ -66,6 +66,31 @@ class AiValidationTests(unittest.TestCase):
         self.assertEqual(decode_answer(q,51,{'word':'reset'}),'reset')
         self.assertIsNone(decode_answer(q,51,{'word':'result'}))
 
+    def test_relation_answers_require_complete_unique_relations(self):
+        q=question(31)
+        q.exam['stem']['remark']=[dict(relation='a'),dict(relation='b')]
+        self.assertEqual(decode_answer(q,31,{'choices':[0,1]}),{'a':0,'b':1})
+        for choices in ([0], [0,True], [0,'1'], [0,2], {'a':0,'b':1}):
+            with self.subTest(choices=choices):
+                self.assertIsNone(decode_answer(q,31,{'choices':choices}))
+        q.exam['stem']['remark']=[dict(relation='a'),dict(relation='a')]
+        self.assertIsNone(decode_answer(q,31,{'choices':[0,1]}))
+
+    def test_sentence_rejects_non_scalar_or_empty_submission_tags(self):
+        q=question(42)
+        for tag in (True, -1, {}, [], '', '\n'):
+            q.exam['options']=[dict(content='word',answer_tag=tag)]
+            with self.subTest(tag=tag):
+                self.assertIsNone(decode_answer(q,42,{'choice':0}))
+        q.exam['options']=[dict(content='word',answer_tag='2#',sub_options=[dict(answer_tag=True)])]
+        self.assertIsNone(decode_answer(q,42,{'choice':0,'sub_choice':0}))
+
+    def test_phrase_without_recognized_blanks_and_oversized_spelling_are_rejected(self):
+        q=question(32)
+        self.assertIsNone(decode_answer(q,32,{'words':['a. 有道德的']}))
+        q=question(51)
+        self.assertIsNone(decode_answer(q,51,{'word':'a'*257}))
+
 
 class AiRequestTests(unittest.TestCase):
     def test_disabled_and_missing_key_make_no_network_request(self):
@@ -136,6 +161,49 @@ class AiIntegrationTests(unittest.TestCase):
         with patch.object(AIFallback,'_request',return_value=(None,'bad response',False)):
             self.assertEqual(e._answer_question(q,17),1)
         e.guess_fn.assert_called_once()
+
+    def test_malformed_http_answers_use_guess_without_stopping_task(self):
+        def envelope(content, **extra):
+            return json.dumps({'choices':[dict(message={'content':content},**extra)]}).encode()
+        bodies=[b'not json',b'[]',b'null',b'{}',b'{"choices":[]}',b'{"choices":[null]}',
+                b'{"choices":[{"message":[]}]}',b'x'*65537,
+                envelope(None),envelope([]),envelope('explanation without JSON'),
+                envelope('{"answer":'),envelope('[]'),envelope('true'),envelope('null'),
+                envelope('{"answer":{"choice":0}}',finish_reason='length')]
+        for value in (None,True,0,'0',[],{'choice':True},{'choice':-1},{'choice':999},
+                      {'choice':'0'},{'choice':0.0},{'words':['apple']},{'choice':{'index':0}}):
+            bodies.append(envelope(json.dumps({'answer':value})))
+        for body in bodies:
+            with self.subTest(body=body[:100]):
+                session=Mock();response=Mock(status_code=200)
+                session.__enter__=Mock(return_value=session);session.__exit__=Mock(return_value=False)
+                response.__enter__=Mock(return_value=response);response.__exit__=Mock(return_value=False)
+                response.iter_content.return_value=[body];session.post.return_value=response
+                q=question();engine=self.engine(q)
+                with patch('util.ai_fallback.requests.Session',return_value=session):
+                    self.assertEqual(engine._answer_question(q,17),1)
+                engine.guess_fn.assert_called_once()
+                self.assertEqual(engine._ai_fallback.failures,1)
+
+    def test_unexpected_decoder_error_falls_back_and_respects_unit_circuit(self):
+        q=question();engine=self.engine(q)
+        with patch.object(AIFallback,'_request',return_value=({'choice':0},'',False)) as request, \
+                patch('util.ai_fallback.decode_answer',side_effect=AttributeError('private response')):
+            for i in range(4):
+                q.exam['stem']['content']=str(i)
+                self.assertEqual(engine._answer_question(q,17),1)
+        self.assertEqual(request.call_count,3)
+        self.assertTrue(engine._ai_fallback.disabled)
+
+    def test_json_code_fence_is_accepted_after_validation(self):
+        ai=solver();session=Mock();response=Mock(status_code=200)
+        session.__enter__=Mock(return_value=session);session.__exit__=Mock(return_value=False)
+        response.__enter__=Mock(return_value=response);response.__exit__=Mock(return_value=False)
+        response.iter_content.return_value=[json.dumps({'choices':[dict(message={
+            'content':'```json\n{"answer":{"choice":0}}\n```'},finish_reason='stop')]}).encode()]
+        session.post.return_value=response
+        with patch('util.ai_fallback.requests.Session',return_value=session):
+            self.assertEqual(ai.solve(question(),17),0)
 
     def test_ambiguous_match_uses_ai_but_unique_match_does_not(self):
         from util.select_mean import select_mean

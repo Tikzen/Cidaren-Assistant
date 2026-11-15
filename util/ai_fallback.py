@@ -41,12 +41,22 @@ def _index(value, count):
     return isinstance(value, int) and not isinstance(value, bool) and 0 <= value < count
 
 
+def _tag(value):
+    return ((isinstance(value, int) and not isinstance(value, bool) and value >= 0)
+            or (isinstance(value, str) and bool(value.strip()) and len(value) <= 128
+                and not any(ord(c) < 32 for c in value)))
+
+
 def decode_answer(info, mode, value):
-    from answer_questions.answer_questions import _norm_option, _template_slots, _sentence_option_answer
+    from answer_questions.answer_questions import _norm_option, _template_slots
     if not isinstance(value, dict):
         return None
     exam = info.exam
+    if not isinstance(exam, dict) or not isinstance(exam.get('stem') or {}, dict):
+        return None
     options = exam.get('options') or []
+    if not isinstance(options, list) or any(not isinstance(o, dict) for o in options):
+        return None
     if mode in (*CHOICES, *SENTENCES):
         index = value.get('choice')
         if not _index(index, len(options)) or not isinstance(options[index], dict):
@@ -58,18 +68,24 @@ def decode_answer(info, mode, value):
         if mode in CHOICES:
             return index
         subs = option.get('sub_options') or []
-        if isinstance(option.get('answer_tag'), str) and subs:
+        tag = option.get('answer_tag')
+        if not _tag(tag):
+            return None
+        if isinstance(tag, str) and subs:
             sub = value.get('sub_choice')
-            if not _index(sub, len(subs)) or not isinstance(subs[sub], dict) or subs[sub].get('answer_tag') is None:
+            if (not isinstance(subs, list) or not _index(sub, len(subs))
+                    or not isinstance(subs[sub], dict) or not _tag(subs[sub].get('answer_tag'))):
                 return None
-            return option['answer_tag'] + str(subs[sub]['answer_tag'])
-        return _sentence_option_answer(option, option.get('content'))
+            return tag + str(subs[sub]['answer_tag'])
+        return tag + '0' if isinstance(tag, str) else tag
     if mode == 31:
         relations = (exam.get('stem') or {}).get('remark')
         choices = value.get('choices')
         if (not isinstance(relations, list) or not relations or not isinstance(choices, list)
                 or len(choices) != len(relations) or not all(_index(i, len(options)) for i in choices)
-                or not all(isinstance(r, dict) and isinstance(r.get('relation'), str) for r in relations)):
+                or not all(isinstance(r, dict) and isinstance(r.get('relation'), str) and r['relation'].strip() for r in relations)):
+            return None
+        if len({r['relation'] for r in relations}) != len(relations):
             return None
         return {r['relation']: index for r, index in zip(relations, choices)}
     if mode == 32:
@@ -77,7 +93,7 @@ def decode_answer(info, mode, value):
         count = _template_slots((exam.get('stem') or {}).get('content', ''))[1]
         pool = {_norm_option(o.get('content')): str(o['content']).strip().replace('\u00a0', ' ')
                 for o in options if isinstance(o, dict) and isinstance(o.get('content'), str)}
-        if not isinstance(words, list) or not words or (count and len(words) != count):
+        if not count or not isinstance(words, list) or len(words) != count:
             return None
         if not all(isinstance(w, str) and _norm_option(w) in pool for w in words):
             return None
@@ -89,7 +105,7 @@ def decode_answer(info, mode, value):
             return None
         lengths = exam.get('w_lens') or []
         for i, (word, tip) in enumerate(zip(words, tips)):
-            if not isinstance(word, str) or not re.fullmatch(r"[A-Za-z]+(?:[-'][A-Za-z]+)*", word) or not word.lower().startswith(tip.lower()):
+            if not isinstance(word, str) or len(word) > 256 or not re.fullmatch(r"[A-Za-z]+(?:[-'][A-Za-z]+)*", word) or not word.lower().startswith(tip.lower()):
                 return None
             if i < len(lengths) and lengths[i] and len(word) != int(lengths[i]):
                 return None
@@ -153,15 +169,34 @@ class AIFallback:
                     body.extend(chunk)
                     if len(body) > 65536:
                         return None, 'AI 响应过长，已忽略', False
-                message = json.loads(body)['choices'][0]['message']['content']
+                envelope = json.loads(body)
+                choices = envelope.get('choices') if isinstance(envelope, dict) else None
+                if (not isinstance(choices, list) or not choices or not isinstance(choices[0], dict)
+                        or not isinstance(choices[0].get('message'), dict)
+                        or choices[0].get('finish_reason') not in (None, 'stop')):
+                    return None, 'AI 响应结构无效或答案未完整生成，沿用普通兜底', False
+                message = choices[0]['message'].get('content')
                 if not isinstance(message, str):
                     return None, 'AI 未返回可解析的文字答案', False
                 if message.strip().startswith('```'):
                     message = re.sub(r'^```(?:json)?\s*|\s*```$', '', message.strip())
                 data = json.loads(message)
-                return data.get('answer'), '', False
+                return data.get('answer') if isinstance(data, dict) else None, '', False
 
     def solve(self, info, mode):
+        # AI 是可选增强：响应结构或转换器的任何意外异常均不能终止答题。
+        # 用户取消仍向上传递，避免停止后继续猜答或提交。
+        try:
+            return self._solve(info, mode)
+        except RequestCancelled:
+            raise
+        except Exception:
+            self.failures += 1
+            self.disabled = self.failures >= 3
+            self._warn('AI 答案处理失败，沿用普通兜底')
+            return None
+
+    def _solve(self, info, mode):
         if not self.settings.get('enabled'):
             return None
         if self.disabled:
